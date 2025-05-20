@@ -57,12 +57,15 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         point_data.rename(columns={"particulate_matter_d_less_than_25_um_surface": "pm25"}, inplace=True)
         point_data["pm25"] *= 1_000_000_000
 
-        for _, sat in point_data[point_data["time"] == row["time"]].iterrows():
-            if "F000" in sat["id"]:
+        w_data = point_data[point_data["time"] == row["time"]]
+
+        for _, sat in w_data.iterrows():
+            is_observation = "F000" in sat["id"]
+            if is_observation:
                 writer.writerow(
                     [
                         name,
-                        row["State Code"] + row["County Code"] + row["Site Num"],
+                        str(row["State Code"]) + str(row["County Code"]) + str(row["Site Num"]),
                         sat["id"],
                         lat,
                         long,
@@ -74,11 +77,6 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
                 count += 1
 
     print(f"Done processing {name}, {count} matches")
-
-
-
-
-
 
 
 def main() -> None:
@@ -94,7 +92,7 @@ def main() -> None:
         .select("particulate_matter_d_less_than_25_um_surface")
     )
 
-    with out_path.open("w", newline="") as f_out:
+    with out_path.open("w", newline="", buffering=1) as f_out:
         writer = csv.writer(f_out)
         writer.writerow(
             [
