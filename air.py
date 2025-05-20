@@ -47,7 +47,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         measurement = row["Sample Measurement"]
 
         # THIS IS REVERSED (x, y not lat, long)
-        point = ee.Geometry.Point(long, lat)
+        point = ee.Geometry.Point(lat, long)
 
         raw = fcams.getRegion(point, scale).getInfo()
         headers = raw[0]
