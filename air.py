@@ -1,10 +1,12 @@
+import csv
+
 import geemap
 from pathlib import Path
 import yaml
 import pandas as pd
 import ee
 
-def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: ee.ImageCollection):
+def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: ee.ImageCollection, writer: csv.writer):
     name = fire_name
     latitude = fire_data.get("latitude")
     longitude = fire_data.get("longitude")
@@ -12,17 +14,17 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
     end = pd.to_datetime(fire_data.get("end"))
     scale = 10_000
 
-    sensors["Date GMT"] = pd.to_datetime(sensors["Date GMT"])
-    sensors["Time GMT"] = pd.to_datetime(sensors["Time GMT"], format="%H:%M").dt.hour
+    print(f"Processing {name}")
+    count = 0
 
-    sensors = sensors[
+    s = sensors[
         (abs(sensors["Latitude"] - latitude) < 0.5) &
         (abs(sensors["Longitude"] - longitude) < 0.5) &
         (sensors["Date GMT"] >= start) &
         (sensors["Date GMT"] <= end)
     ]
 
-    if sensors.empty:
+    if s.empty:
         return
 
     region = ee.Geometry.Rectangle([
@@ -39,7 +41,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
     )
 
     rows = []
-    for _, row in sensors.iterrows():
+    for _, row in s.iterrows():
         lat, long = row["Latitude"], row["Longitude"]
         date, hour = row["Date GMT"], row["Time GMT"]
         measurement = row["Sample Measurement"]
@@ -48,12 +50,32 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         point = ee.Geometry.Point(long, lat)
 
         raw = fcams.getRegion(point, scale).getInfo()
-        point_data = pd.DataFrame(raw)
+        headers = raw[0]
+        data = raw[1:]
+        point_data = pd.DataFrame(data, columns=headers)
+        point_data["time"] = pd.to_datetime(point_data["time"], unit="ms")
+        point_data.rename(columns={"particulate_matter_d_less_than_25_um_surface": "pm25"}, inplace=True)
+        point_data["pm25"] *= 1_000_000_000
 
-        p_lat, p_long = point_data["latitude"], point_data["longitude"]
-        p_pm25 = point_data["particulate_matter_d_less_than_25_um_surface"]
-        p_info = point_data["id"]
-        p_time = point_data["time"]
+        for _, sat in point_data[point_data["time"] == row["time"]].iterrows():
+            if "F000" in sat["id"]:
+                writer.writerow(
+                    [
+                        name,
+                        row["State Code"] + row["County Code"] + row["Site Num"],
+                        sat["id"],
+                        lat,
+                        long,
+                        sat["time"],
+                        measurement,
+                        sat["pm25"],
+                    ]
+                )
+                count += 1
+
+    print(f"Done processing {name}, {count} matches")
+
+
 
 
 
@@ -64,7 +86,7 @@ def main() -> None:
 
     fire_dir = Path("data/fires")
     sensor_dir = Path("data/sensor")
-    out_dir = Path("data/out")
+    out_path = Path("out.csv")
 
 
     cams = (
@@ -72,14 +94,36 @@ def main() -> None:
         .select("particulate_matter_d_less_than_25_um_surface")
     )
 
-    for fire_path in fire_dir.glob("us_fire_*_1e7.yml"):
-        year = fire_path.stem.split("_")[2]
-        sensors = pd.read_csv(f"{sensor_dir}/hourly_88101_{year}.csv", header=0, skiprows=0)
-        with fire_path.open() as f:
-            fire_file = yaml.safe_load(f)
-            fires = {k: v for k, v in fire_file.items() if k not in ("output_bucket", "rectangular_size", "year")}
-            for fire_name, fire_data in fires.items():
-                process_fire(fire_name, fire_data, sensors, cams)
+    with out_path.open("w", newline="") as f_out:
+        writer = csv.writer(f_out)
+        writer.writerow(
+            [
+                "fire_name",
+                "sensor_id",
+                "sat_id",
+                "lat",
+                "lon",
+                "time",
+                "sensor_pm25",
+                "sat_pm25",
+            ]
+        )
+
+        for fire_path in fire_dir.glob("us_fire_*_1e7.yml"):
+            year = fire_path.stem.split("_")[2]
+            for t in ["88101", "88502"]:
+                file = f"{sensor_dir}/hourly_{t}_{year}.csv"
+                print(f"Reading {file}")
+                sensors = pd.read_csv(file, header=0, skiprows=0)
+                sensors["Date GMT"] = pd.to_datetime(sensors["Date GMT"])
+                sensors["Time GMT"] = pd.to_datetime(sensors["Time GMT"], format="%H:%M").dt.hour
+                sensors["time"] = sensors["Date GMT"] + pd.to_timedelta(sensors["Time GMT"], unit="h")
+                print(f"Processing {file}")
+                with fire_path.open() as f:
+                    fire_file = yaml.safe_load(f)
+                    fires = {k: v for k, v in fire_file.items() if k not in ("output_bucket", "rectangular_size", "year")}
+                    for fire_name, fire_data in fires.items():
+                        process_fire(fire_name, fire_data, sensors, cams, writer)
 
 
 if __name__ == "__main__":
