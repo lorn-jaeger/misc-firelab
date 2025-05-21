@@ -5,6 +5,6 @@ token.json
 oath.txt
 token.json
 *.json
-out.csv
-cout.csv
+*.csv
+
 

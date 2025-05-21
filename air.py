@@ -42,7 +42,7 @@ def get_point_data(s: pd.DataFrame, fcams: ee.ImageCollection):
     point_data["time"] = pd.to_datetime(point_data["time"], unit="ms")
     point_data.rename(columns={"particulate_matter_d_less_than_25_um_surface": "pm25"}, inplace=True)
     point_data["pm25"] *= 1_000_000_000
-    point_data = point_data[point_data["id"].str.contains("F000", na=False)]
+   # point_data = point_data[point_data["id"].str.contains("F000", na=False)]
 
     return point_data
 
@@ -113,7 +113,7 @@ def main() -> None:
 
     fire_dir = Path("data/fires")
     sensor_dir = Path("data/sensor")
-    out_path = Path("out.csv")
+    out_path = Path("fout.csv")
 
     cams = (
         ee.ImageCollection("ECMWF/CAMS/NRT")
