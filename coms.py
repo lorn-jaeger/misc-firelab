@@ -48,7 +48,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         date, hour = row["Date GMT"], row["Time GMT"]
         measurement = row["Sample Measurement"]
 
-        # THIS IS REVERSED (x, y not lat, long)
+        # THIS ISz REVERSED (x, y not lat, long)
         point = ee.Geometry.Point(long, lat)
 
         raw = fcams.getRegion(point, scale).getInfo()

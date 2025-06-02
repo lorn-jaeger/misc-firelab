@@ -1,10 +1,13 @@
+import xarray as xr
+import earthaccess
 import csv
-import dask.dataframe as dd
-import geemap
 from pathlib import Path
 import yaml
 import pandas as pd
 import ee
+import shutil
+
+
 
 def fmt_sensor_data(sensors: pd.DataFrame):
     sensors["Date GMT"] = pd.to_datetime(sensors["Date GMT"])
@@ -23,32 +26,19 @@ def fmt_sensor_data(sensors: pd.DataFrame):
 
     return sensors
 
-def get_point_data(s: pd.DataFrame, fcams: ee.ImageCollection):
-    unique_sensors = s[["longitude", "latitude"]].drop_duplicates()
-
-    all_point_data = []
-
-    for _, row in unique_sensors.iterrows():
-        point = ee.Geometry.Point([row['longitude'], row['latitude']])
-        raw = fcams.getRegion(point, 10_000).getInfo()
-        headers = raw[0]
-        data = raw[1:]
-        df = pd.DataFrame(data, columns=headers)
-        df["latitude"] = row["latitude"]
-        df["longitude"] = row["longitude"]
-        all_point_data.append(df)
-
-    point_data = pd.concat(all_point_data, ignore_index=True)
-    point_data["time"] = pd.to_datetime(point_data["time"], unit="ms")
-    point_data.rename(columns={"particulate_matter_d_less_than_25_um_surface": "pm25"}, inplace=True)
-    point_data["pm25"] *= 1_000_000_000
-   # point_data = point_data[point_data["id"].str.contains("F000", na=False)]
-
-    return point_data
+def get_point_data(s: pd.DataFrame):
+    return
 
 
 
-def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: ee.ImageCollection, writer: csv.writer):
+
+
+def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, writer: csv.writer, code):
+    merra_data_dir = Path("/home/home/Code/Fire/EE_Wildfire/air_quality/data")
+    for path in merra_data_dir.iterdir():
+        if path.is_dir() and "2025" in path.name:
+            shutil.rmtree(path)
+
     name = fire_name
     latitude = fire_data.get("latitude")
     longitude = fire_data.get("longitude")
@@ -69,56 +59,57 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         print("No sensor data available")
         return
 
-    region = ee.Geometry.Rectangle([
-        longitude - 0.5,
-        latitude - 0.5,
-        longitude + 0.5,
-        latitude + 0.5
-    ])
-
-    fcams = (
-        cams
-        .filterBounds(region)
-        .filterDate(start, end)
+    results = earthaccess.search_data(
+        concept_id="C3094710982-GES_DISC",  # Verify correct CAMS concept ID
+        temporal=(start, end),
+        bounding_box=(longitude - 0.5, latitude - 0.5, longitude + 0.5, latitude + 0.5),
     )
+    files = earthaccess.download(results)
 
-    point_data = get_point_data(s, fcams)
+    # Open dataset and process
+    ds = xr.open_mfdataset(files, combine="by_coords")
+    pm25_var = "MERRA2_CNN_Surface_PM25"  # Confirm variable name in dataset
 
-    merged = pd.merge(
-        s,
-        point_data,
-        on=["latitude", "longitude", "time"],
-        how="inner",
-        suffixes=("_sensor", "_sat")
-    )
+    # Convert sensor times to numpy datetime64
+    s["time_np"] = s["time"].astype("datetime64[ns]")
 
-    for _, row in merged.iterrows():
+    # Extract satellite data at sensor points
+    try:
+        sat_data = ds[pm25_var].interp(
+            time=xr.DataArray(s["time_np"], dims="sensor"),
+            lat=xr.DataArray(s["latitude"], dims="sensor"),
+            lon=xr.DataArray(s["longitude"], dims="sensor")
+        )
+        s["pm25_sat"] = sat_data.values  # Adjust scaling if needed
+
+    except KeyError as e:
+        print(f"Variable {pm25_var} not found: {e}")
+        return
+
+    # Write merged results
+    for _, row in s.iterrows():
         writer.writerow([
             name,
-            row["id_sensor"],
-            row["id_sat"],
+            row["id"],
+            "CAMS",  # Placeholder for satellite ID
             row["latitude"],
             row["longitude"],
             row["time"],
-            row["pm25_sensor"],
+            row["pm25"],
             row["pm25_sat"],
+            code,
         ])
         count += 1
-
     print(f"Done processing {name}, {count} matches")
 
 
 def main() -> None:
-    geemap.ee_initialize()
+    auth = earthaccess.login(persist=True)
 
     fire_dir = Path("data/fires")
     sensor_dir = Path("data/sensor")
-    out_path = Path("fout.csv")
+    out_path = Path("data/out/out2.csv")
 
-    cams = (
-        ee.ImageCollection("ECMWF/CAMS/NRT")
-        .select("particulate_matter_d_less_than_25_um_surface")
-    )
 
     with out_path.open("w", newline="", buffering=100) as f_out:
         writer = csv.writer(f_out)
@@ -132,6 +123,7 @@ def main() -> None:
                 "time",
                 "sensor_pm25",
                 "sat_pm25",
+                "code"
             ]
         )
 
@@ -140,7 +132,7 @@ def main() -> None:
             for t in ["88101", "88502"]:
                 file = f"{sensor_dir}/hourly_{t}_{year}.csv"
                 print(f"Reading {file}")
-                sensors = pd.read_csv(file, header=0, skiprows=0)
+                sensors = pd.read_csv(file, header=0, skiprows=0, low_memory=False)
                 sensors = fmt_sensor_data(sensors)
                 print(f"Processing {file}")
                 with fire_path.open() as f:
@@ -148,13 +140,10 @@ def main() -> None:
                     fires = {k: v for k, v in fire_file.items() if k not in ("output_bucket", "rectangular_size", "year")}
                     for fire_name, fire_data in fires.items():
                         try:
-                            process_fire(fire_name, fire_data, sensors, cams, writer)
+                            process_fire(fire_name, fire_data, sensors, writer, t)
                         except Exception as e:
                             print(e)
 
 
 if __name__ == "__main__":
     main()
-
-
-
