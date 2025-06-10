@@ -4,9 +4,10 @@ import geemap
 from pathlib import Path
 import yaml
 import pandas as pd
-import ee
+from ee.geometry import Geometry
+from ee.imagecollection import ImageCollection
 
-def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: ee.ImageCollection, writer: csv.writer):
+def process_fire(fire_name, fire_data, sensors, cams, writer):
     name = fire_name
     latitude = fire_data.get("latitude")
     longitude = fire_data.get("longitude")
@@ -27,7 +28,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
     if s.empty:
         return
 
-    region = ee.Geometry.Rectangle([
+    region = Geometry.Rectangle([
         longitude - 0.5,
         latitude - 0.5,
         longitude + 0.5,
@@ -49,7 +50,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         measurement = row["Sample Measurement"]
 
         # THIS IS REVERSED (x, y not lat, long)
-        point = ee.Geometry.Point(long, lat)
+        point = Geometry.Point(long, lat)
 
         raw = fcams.getRegion(point, scale).getInfo()
         headers = raw[0]
@@ -60,10 +61,10 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, cams: e
         point_data["pm25"] *= 1_000_000_000
 
         w_data = point_data[point_data["time"] == row["time"]]
-        w_data = w_data[w_data["id"].str.contains("F000", na=False)]
+        w_data = w_data[w_data["id"].str.contains("F000", na=False)] #type: ignore
 
 
-        for _, sat in w_data.iterrows():
+        for _, sat in w_data.iterrows(): #type: ignore
                 writer.writerow(
                     [
                         name,
@@ -90,7 +91,7 @@ def main() -> None:
 
 
     cams = (
-        ee.ImageCollection("ECMWF/CAMS/NRT")
+        ImageCollection("ECMWF/CAMS/NRT")
         .select("particulate_matter_d_less_than_25_um_surface")
     )
 
@@ -118,7 +119,7 @@ def main() -> None:
                 sensors["Date GMT"] = pd.to_datetime(sensors["Date GMT"])
                 sensors["Time GMT"] = pd.to_datetime(sensors["Time GMT"], format="%H:%M").dt.hour
                 sensors = sensors[sensors["Time GMT"].isin([0, 12])]
-                sensors["time"] = sensors["Date GMT"] + pd.to_timedelta(sensors["Time GMT"], unit="h")
+                sensors["time"] = sensors["Date GMT"] + pd.to_timedelta(sensors["Time GMT"], unit="h") #type: ignore
                 print(f"Processing {file}")
                 with fire_path.open() as f:
                     fire_file = yaml.safe_load(f)

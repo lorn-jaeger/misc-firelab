@@ -1,7 +1,6 @@
 data/
 credentials.json
 token.json
-*.ipynb
 oath.txt
 token.json
 *.json
