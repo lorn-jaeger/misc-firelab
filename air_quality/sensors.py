@@ -1,6 +1,13 @@
 from pathlib import Path
 import pandas as pd
 import argparse
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    import geemap
+
+geemap.ee_initialize()
 
 SENSOR_PATH = Path("data/sensors")
 TEST_PATH = Path("data/test/sensors")
@@ -13,6 +20,7 @@ def clear_output():
     for file in OUT_PATH.iterdir():
         if file.is_file():
             file.unlink()
+
 
 def parse_args():
     """
@@ -32,6 +40,10 @@ def parse_args():
 
     if args.test:
         SENSOR_PATH = TEST_PATH
+
+def save(file):
+    out = OUT_PATH / file.name
+    file.to_csv(out, index=False)
 
 def CAMS(file):
     return file
@@ -53,16 +65,7 @@ def main() -> None:
         file = pd.read_csv(file, low_memory=False)
         for source in [CAMS, CONUS, MERRA2, MERRA2R]:
             file = source(file)
-        
-
-
-
-        
-
-
-
-
-
+            save(file)
 
 if __name__ == "__main__":
     main()
