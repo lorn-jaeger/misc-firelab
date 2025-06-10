@@ -94,7 +94,7 @@ def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, writer:
             "CAMS",  # Placeholder for satellite ID
             row["latitude"],
             row["longitude"],
-            row["time"],
+            row["time"], 
             row["pm25"],
             row["pm25_sat"],
             code,

@@ -45,7 +45,7 @@ def process_fire(fire_name, fire_data, sensors, cams, writer):
 
     rows = []
     for _, row in s.iterrows():
-        lat, long = row["Latitude"], row["Longitude"]
+        lat, long = row["Latitude"], row["Longitud e"]
         date, hour = row["Date GMT"], row["Time GMT"]
         measurement = row["Sample Measurement"]
 
