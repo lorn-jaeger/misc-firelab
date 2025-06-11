@@ -4,6 +4,7 @@ import argparse
 import warnings
 from ee.geometry import Geometry
 from ee.imagecollection import ImageCollection
+from tqdm import tqdm
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -101,9 +102,6 @@ def parse_gee_region(raw):
 def CAMS(sensors):
     sensors["CAMS"] = pd.NA
 
-    min_start = pd.Timestamp("2016-06-22 12:00:00")
-    max_end = pd.Timestamp("2025-06-14 12:00:00")
-
     cams = (
         ImageCollection("ECMWF/CAMS/NRT")
         .select("particulate_matter_d_less_than_25_um_surface")
@@ -112,30 +110,41 @@ def CAMS(sensors):
     cams_data = pd.DataFrame(columns=["Time", "Longitude", "Latitude", "pm25"]) #type: ignore
 
     locations = get_unique(sensors)
-
+    outer = tqdm(locations.iterrows(), total=len(locations), desc="Fetching CAMS data", position=0)
     # can use apply instead but this is only 1000 iterations
     # most of the time is taken by api calls to earth engine
-    for _, row in locations.iterrows():
+    for _, row in outer:
         point = Geometry.Point(row["Longitude"], row["Latitude"])
         # batching is needed so we don't hit the 3000 item limit
         months = pd.date_range(pd.to_datetime(row["Start Time"]), pd.to_datetime(row["End Time"]), freq="ME")
-
-        for month in months:
+        inner = tqdm(months, desc="Monthly data", leave=False, position=1)
+        for month in inner:
             start = month
             end = month + pd.DateOffset(months=1)
-            monthly_data = (
-                cams
-                .filterBounds(point)
-                .filterDate(start, end)
-                .getRegion(point, scale=1)
-                .getInfo()
-            )
-            monthly_data = parse_gee_region(monthly_data)
-            # Needed overwrite. Google Earth Engine rounds lats and lons so there are slightly off
-            # Otherwise there will be no matches on merge
-            monthly_data["Latitude"] = row["Latitude"]
-            monthly_data["Longitude"] = row["Longitude"]
-            cams_data = pd.concat([cams_data, monthly_data], ignore_index=True) #type: ignore
+
+            # skip if start is before the start of the dataset
+            if start < pd.Timestamp("2016-06-23"):
+                continue
+
+            try:
+
+                monthly_data = (
+                    cams
+                    .filterBounds(point)
+                    .filterDate(start, end)
+                    .getRegion(point, scale=10_000)
+                    .getInfo()
+                )
+                monthly_data = parse_gee_region(monthly_data)
+                # Needed overwrite. Google Earth Engine rounds lats and lons so there are slightly off
+                # Otherwise there will be no matches on merge
+                monthly_data["Latitude"] = row["Latitude"]
+                monthly_data["Longitude"] = row["Longitude"]
+                cams_data = pd.concat([cams_data, monthly_data], ignore_index=True) #type: ignore
+            except Exception as e:
+                print(e)
+                continue
+            
 
     sensors = sensors.merge(
         cams_data,
@@ -160,10 +169,7 @@ def main() -> None:
         sensors = pd.read_csv(file, low_memory=False)
         for source in sources:
             sensors = fmt_sensors(sensors)
-            try:
-                sensors = source(sensors)
-            except Exception as e:
-                print(e)
+            sensors = source(sensors)
             print(sensors)
         save(sensors)
 
