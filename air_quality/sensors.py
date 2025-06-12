@@ -6,6 +6,9 @@ from ee.geometry import Geometry
 from ee.imagecollection import ImageCollection
 from tqdm import tqdm
 
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     import geemap
@@ -105,6 +108,7 @@ def CAMS(sensors):
     cams = (
         ImageCollection("ECMWF/CAMS/NRT")
         .select("particulate_matter_d_less_than_25_um_surface")
+        .filter('model_initialization_hour == 0')
     )
 
     cams_data = pd.DataFrame(columns=["Time", "Longitude", "Latitude", "pm25"]) #type: ignore

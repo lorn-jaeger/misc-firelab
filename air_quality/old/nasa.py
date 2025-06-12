@@ -7,6 +7,7 @@ import pandas as pd
 import ee
 import shutil
 
+# pyright: ignore-all
 
 
 def fmt_sensor_data(sensors: pd.DataFrame):
