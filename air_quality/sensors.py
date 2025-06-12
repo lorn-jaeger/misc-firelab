@@ -5,12 +5,6 @@ import warnings
 from ee.geometry import Geometry
 from ee.imagecollection import ImageCollection
 from tqdm import tqdm
-from colorama import init, Fore, Style
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-init(autoreset=True)
-
-warnings.filterwarnings("ignore", category=FutureWarning)
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
@@ -105,72 +99,55 @@ def parse_gee_region(raw):
 
     return df[["Time", "Longitude", "Latitude", "pm25"]]
 
-
-
-
-def process_sensor(row, credentials):
-
-    Initialize(credentials)
+def CAMS(sensors):
+    sensors["CAMS"] = pd.NA
 
     cams = (
         ImageCollection("ECMWF/CAMS/NRT")
         .select("particulate_matter_d_less_than_25_um_surface")
     )
 
-    point = Geometry.Point(row["Longitude"], row["Latitude"])
-    months = pd.date_range(pd.to_datetime(row["Start Time"]), pd.to_datetime(row["End Time"]), freq="ME")
-    data = []
-
-    print(Fore.GREEN + f"Processing sensor at {row['Latitude']},{row['Longitude']}")
-    for month in months:
-        start = month
-        end = month + pd.DateOffset(months=1)
-        print(f"Batch {start} to {end}")
-        try:
-            monthly_data = (
-                cams
-                .filterBounds(point)
-                .filterDate(start, end)
-                .getRegion(point, scale=10_000)
-                .getInfo()
-            )
-            monthly_data = parse_gee_region(monthly_data)
-            monthly_data["Latitude"] = row["Latitude"]
-            monthly_data["Longitude"] = row["Longitude"]
-            data.append(monthly_data)
-        except Exception as e:
-            print(e)
-            continue
-
-    if data:
-        return pd.concat(data, ignore_index=True)
-    else:
-        return pd.DataFrame(columns=["Time", "Longitude", "Latitude", "pm25"]) #type: ignore
-
-
-def CAMS(sensors):
-    from ee import Authenticate, Initialize
-    from ee.data import get_persistent_credentials
-    Authenticate()
-    credentials = get_persistent_credentials()
-
-    sensors["CAMS"] = pd.NA
+    cams_data = pd.DataFrame(columns=["Time", "Longitude", "Latitude", "pm25"]) #type: ignore
 
     locations = get_unique(sensors)
-    cams_data = []
+    outer = tqdm(locations.iterrows(), total=len(locations), desc="Fetching CAMS data", position=0)
+    # can use apply instead but this is only 1000 iterations
+    # most of the time is taken by api calls to earth engine
+    for _, row in outer:
+        point = Geometry.Point(row["Longitude"], row["Latitude"])
+        # batching is needed so we don't hit the 3000 item limit
+        months = pd.date_range(pd.to_datetime(row["Start Time"]), pd.to_datetime(row["End Time"]), freq="ME")
+        inner = tqdm(months, desc="Monthly data", leave=False, position=1)
+        for month in inner:
+            start = month
+            end = month + pd.DateOffset(months=1)
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(process_sensor, row, credentials): i for i, row in locations.iterrows()}
-        for future in as_completed(futures):
+            # skip if start is before the start of the dataset
+            if start < pd.Timestamp("2016-06-23"):
+                continue
+
             try:
-                result = future.result()
-                cams_data.append(result)
-            except Exception as e:
-                print(f"Thread error: {e}")
 
-    cams_df = pd.concat(cams_data, ignore_index=True)
+                monthly_data = (
+                    cams
+                    .filterBounds(point)
+                    .filterDate(start, end)
+                    .getRegion(point, scale=10_000)
+                    .getInfo()
+                )
+                monthly_data = parse_gee_region(monthly_data)
+                # Needed overwrite. Google Earth Engine rounds lats and lons so there are slightly off
+                # Otherwise there will be no matches on merge
+                monthly_data["Latitude"] = row["Latitude"]
+                monthly_data["Longitude"] = row["Longitude"]
+                cams_data = pd.concat([cams_data, monthly_data], ignore_index=True) #type: ignore
+            except Exception as e:
+                print(e)
+                continue
+            
+
     sensors = sensors.merge(
-        cams_df,
+        cams_data,
         on=["Time", "Latitude", "Longitude"],
         how="left"
     )
@@ -180,18 +157,15 @@ def CAMS(sensors):
 
     return sensors
 
-
-from ee import Initialize, Authenticate
-
 def main() -> None:
     parse_args()
+    try_auth()
 
-    
     files = SENSOR_PATH.iterdir()
     sources = [CAMS]
 
     for file in files:
-        print(Fore.GREEN + f"Reading {file.name}")
+        print(f"Reading {file.name}")
         sensors = pd.read_csv(file, low_memory=False)
         for source in sources:
             sensors = fmt_sensors(sensors)
