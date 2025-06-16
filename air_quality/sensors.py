@@ -45,8 +45,12 @@ def parse_args():
     if args.test:
         SENSOR_PATH = TEST_PATH
 
+count = 0
+
 def save(file):
-    file.to_csv("data/out/out", index=False)
+    global count
+    file.to_csv(f"data/out/out{count}", index=False)
+    count += 1
 
 def try_auth():
     geemap.ee_initialize()
@@ -71,9 +75,82 @@ def CONUS(sensors):
     return sensors
 
 
+
+from earthaccess import login, search_data, download
+import xarray as xr
+import pandas as pd
+from tqdm import tqdm
+from ee.geometry import Geometry
+
+
+from earthaccess import search_data, download
+import xarray as xr
+import pandas as pd
+from tqdm import tqdm
+from pathlib import Path
+
 def MERRA2(sensors):
     sensors["MERRA2"] = pd.NA
+    variable = "MERRA2_CNN_Surface_PM25"
+    data = pd.DataFrame(columns=["Time", "Latitude", "Longitude", "pm25"])
+
+    locations = get_unique(sensors)
+
+    for _, row in locations.iterrows():
+        lat, lon = row["Latitude"], row["Longitude"]
+        start = pd.to_datetime(row["Start Time"])
+        end = pd.to_datetime(row["End Time"])
+        print(f"Processing sensor at {lat}, {lon} from {start} to {end}")
+
+        results = search_data(
+            concept_id="C3094710982-GES_DISC",
+            temporal=(start, end),
+            bounding_box=(lon - 0.1, lat - 0.1, lon + 0.1, lat + 0.1),
+        )
+        files = download(results)
+        if not files:
+            continue
+
+        try:
+            ds = xr.open_mfdataset(files, combine="by_coords")
+            times = pd.date_range(start, end, freq="H")
+            sat_pm25 = ds[variable].interp(
+                time=xr.DataArray(times, dims="time"),
+                lat=lat,
+                lon=lon
+            )
+            df = pd.DataFrame({
+                "Time": times,
+                "Latitude": lat,
+                "Longitude": lon,
+                "pm25": sat_pm25.values
+            })
+            data = pd.concat([data, df], ignore_index=True)
+        except Exception as e:
+            print(f"Failed {lat},{lon}: {e}")
+        finally:
+            ds.close()
+            for f in files:
+                try:
+                    Path(f).unlink()
+                except Exception as e:
+                    print(f"Error deleting file {f}: {e}")
+
+    # Round to avoid floating-point merge mismatch
+    data["Latitude"] = data["Latitude"].round(4)
+    data["Longitude"] = data["Longitude"].round(4)
+    sensors["Latitude"] = sensors["Latitude"].round(4)
+    sensors["Longitude"] = sensors["Longitude"].round(4)
+
+    sensors = sensors.merge(data, on=["Time", "Latitude", "Longitude"], how="left")
+    sensors["MERRA2"] = sensors["pm25"]
+    sensors.drop(columns=["pm25"], inplace=True)
+
+    print(sensors)
+    print(sensors.shape)
+
     return sensors
+
 
 
 def MERRA2R(sensors):
@@ -166,7 +243,7 @@ def main() -> None:
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CAMS]
+    sources = [MERRA2]
 
     for file in files:
         print(f"Reading {file.name}")
