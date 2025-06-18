@@ -6,5 +6,7 @@ token.json
 *.json
 *.csv
 *.nc
+*.nc.part
+*__pycache__*
 
 
