@@ -1,12 +1,13 @@
 import ee, pandas as pd, pathlib as pl
 from tqdm import tqdm
+
 ee.Initialize(project='ee-earthdata-459819')
 
 def fmt_sensors(df: pd.DataFrame) -> pd.DataFrame:
     # ‘Date GMT’ is a date; ‘Time GMT’ is an integer hour (0-23)
     df = df.copy()
     df['Date GMT'] = pd.to_datetime(df['Date GMT'])
-    df['Time'] = df['Date GMT'] + pd.to_timedelta(df['Time GMT'] + ":00")
+    df['Time'] = df['Date GMT'] + pd.to_timedelta(df['Time GMT'].astype(str) + ":00")
     return df[['Time', 'Latitude', 'Longitude', 'Sample Measurement']]
 
 def get_unique(df: pd.DataFrame) -> pd.DataFrame:
@@ -33,10 +34,20 @@ def cams_sample(csv_path: pl.Path) -> str:
     start = ee.Date(ranges['Start_Time'].min())
     end   = ee.Date(ranges['End_Time'].max()).advance(1, 'day')
 
-    imgs = (ee.ImageCollection('ECMWF/CAMS/NRT')
+    cams = (ee.ImageCollection('ECMWF/CAMS/NRT')
               .select('particulate_matter_d_less_than_25_um_surface')
-              .filter('model_initialization_hour == 0')
-              .filterDate(start, end))
+              .filterDate(start, end)
+              .filter(ee.Filter.lte('model_forecast_hour', 11)))
+
+    # Keep one image per forecasted time (system:time_start), lowest forecast hour
+    timestamps = cams.aggregate_array('system:time_start').distinct()
+
+    def pick_best_image(t):
+        return cams.filter(ee.Filter.eq('system:time_start', t)) \
+                   .sort('model_forecast_hour') \
+                   .first()
+
+    imgs = ee.ImageCollection(timestamps.map(pick_best_image))
 
     def sample(img):
         t = img.date().format('YYYY-MM-dd HH:mm')
@@ -48,11 +59,10 @@ def cams_sample(csv_path: pl.Path) -> str:
 
     table = imgs.map(sample).flatten()
 
-    
     task = ee.batch.Export.table.toDrive(
         collection     = table,
         description    = f'cams_{csv_path.stem}',
-        folder         = 'EarthEngine',         # Drive folder (creates it if needed)
+        folder         = 'EarthEngine_final',
         fileNamePrefix = f'cams_{csv_path.stem}',
         fileFormat     = 'CSV'
     )

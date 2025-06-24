@@ -17,7 +17,7 @@ with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     import geemap
 
-SENSOR_PATH = Path("data/sensors")
+SENSOR_PATH = Path("data/sensors/using")
 TEST_PATH = Path("data/test/sensors")
 OUT_PATH = Path("data/out")
 
@@ -49,9 +49,17 @@ def parse_args():
     if args.test:
         SENSOR_PATH = TEST_PATH
 
-
 def save(file, name):
     file.to_csv(f"data/out/out{name}", index=False)
+
+
+import re
+
+def get_year(name: str) -> int:
+    match = re.search(r"\d{4}", name)
+    if match:
+        return int(match.group(0))
+    raise ValueError(f"No 4-digit year found in filename: {name}")
 
 def try_auth():
     geemap.ee_initialize()
@@ -192,13 +200,16 @@ def fmt_ee_output(file):
 def CAMS(sensors, name):
     sensors["CAMS"] = pd.NA
 
-    data = pd.read_csv(f"cams_{name}", low_memory=False)
+    data = pd.read_csv(f"./data/ee/cams_{name}", low_memory=False)
 
     data = data.rename(columns={
         "lat": "Latitude",
         "lon": "Longitude",
         "time": "Time",
     })
+
+    sensors["Time"] = pd.to_datetime(sensors["Time"])
+    data["Time"] = pd.to_datetime(data["Time"])
 
     data = data[["Latitude", "Longitude", "Time", "first"]]
 
@@ -219,7 +230,9 @@ def main() -> None:
     for file in files:
         print(f"Reading {file.name}")
         sensors = pd.read_csv(file, low_memory=False)
+        print(f"Processing {file.name}")
         for source in sources:
+            print(f"{source.__name__}...")
             sensors = fmt_sensors(sensors)
             sensors = source(sensors, file.name)
         save(sensors, file.name)
