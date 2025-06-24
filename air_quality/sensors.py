@@ -266,6 +266,9 @@ def get_pm25_CONUS(row, ds, transformer):
     col = int((x - XORIG) / XCELL)
     row_idx = int((y - YORIG) / YCELL)
 
+    if not (0 <= col < ds.dims["COL"]) or not (0 <= row_idx < ds.dims["ROW"]):
+        return pd.NA
+
     try:
         time_idx = ds.indexes["time"].get_indexer([row["Time"]], method="nearest")[0]
         pm25 = ds['PM25_TOT'].isel(time=time_idx, LAY=0, ROW=row_idx, COL=col).values.item()
@@ -290,24 +293,52 @@ def CONUS(sensors):
         concat_dim="TSTEP",
         decode_cf=False
     )
-
-    ds = decode_times(ds).load()
+    ds = decode_times(ds).load()        
 
     proj = Proj(
-        proj='lcc',
-        lat_1=ds.attrs['P_ALP'],
-        lat_2=ds.attrs['P_BET'],
-        lat_0=ds.attrs['YCENT'],
-        lon_0=ds.attrs['XCENT'],
+        proj="lcc",
+        lat_1=ds.attrs["P_ALP"],
+        lat_2=ds.attrs["P_BET"],
+        lat_0=ds.attrs["YCENT"],
+        lon_0=ds.attrs["XCENT"],
         x_0=0,
         y_0=0,
-        ellps='sphere'
+        ellps="sphere"
     )
-
     transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
 
-    sensors["CONUS"] = sensors.apply(get_pm25_CONUS, axis=1, args=(ds, transformer))
+    lon_arr = sensors["Longitude"].to_numpy()
+    lat_arr = sensors["Latitude"].to_numpy()
+    x_arr, y_arr = transformer.transform(lon_arr, lat_arr)
 
+    XORIG, YORIG = ds.attrs["XORIG"], ds.attrs["YORIG"]
+    XCELL, YCELL = ds.attrs["XCELL"], ds.attrs["YCELL"]
+
+    col = ((x_arr - XORIG) // XCELL).astype("int64")
+    row = ((y_arr - YORIG) // YCELL).astype("int64")
+
+    in_bounds = (
+        (0 <= col) & (col < ds.dims["COL"]) &
+        (0 <= row) & (row < ds.dims["ROW"])
+    )
+
+    time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy(), method="nearest")
+    time_ok = time_idx >= 0
+
+    valid = in_bounds & time_ok
+
+    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values  
+
+    out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
+    if valid.any():
+        vals = pm25_grid[
+            time_idx[valid],
+            row[valid],
+            col[valid]
+        ]
+        out.iloc[valid] = vals
+
+    sensors["CONUS"] = out
     return sensors
 
 def main() -> None:
