@@ -1,10 +1,13 @@
 from pathlib import Path
+import glob
+from datetime import datetime, timedelta
 import pandas as pd
 import argparse
 import warnings
 from ee.geometry import Geometry
 from ee.imagecollection import ImageCollection
 from tqdm import tqdm
+from pyproj import Proj, Transformer
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -69,10 +72,6 @@ def get_unique(sensors):
 
     return result
 
-
-def CONUS(sensors):
-    sensors["CONUS"] = pd.NA
-    return sensors
 
 
 
@@ -152,10 +151,6 @@ def MERRA2(sensors):
     return sensors
 
 
-
-def MERRA2R(sensors):
-    sensors["MEERA2R"] = pd.NA
-    return sensors
 
 def AIRNOW(sensors):
     sensors["AIRNOW"] = pd.NA
@@ -238,12 +233,89 @@ def CAMS(sensors):
 
     return sensors
 
+def MERRA2R(sensors):
+    sensors["MEERA2R"] = pd.NA
+
+    return sensors
+
+
+
+def decode_times(ds):
+    sdate = ds.attrs["SDATE"]
+    tstep = ds.attrs["TSTEP"]
+
+    year = int(str(sdate)[:4])
+    jday = int(str(sdate)[4:])
+    base_time = datetime(year, 1, 1) + timedelta(days=jday - 1)
+
+    step_hours = int(tstep // 10000)
+    times = [base_time + timedelta(hours=int(i) * step_hours) for i in range(ds.dims["TSTEP"])]
+
+    ds = ds.assign_coords(time=("TSTEP", times))
+    ds = ds.swap_dims({"TSTEP": "time"})  
+    return ds
+
+def get_pm25_CONUS(row, ds, transformer):
+    x, y = transformer.transform(row["Longitude"], row["Latitude"])
+
+    XORIG = ds.attrs['XORIG']
+    YORIG = ds.attrs['YORIG']
+    XCELL = ds.attrs['XCELL']
+    YCELL = ds.attrs['YCELL']
+
+    col = int((x - XORIG) / XCELL)
+    row_idx = int((y - YORIG) / YCELL)
+
+    try:
+        time_idx = ds.indexes["time"].get_indexer([row["Time"]], method="nearest")[0]
+        pm25 = ds['PM25_TOT'].isel(time=time_idx, LAY=0, ROW=row_idx, COL=col).values.item()
+    except Exception as e:
+        print(f"Failed for time: {row['Time']}, row: {row_idx}, col: {col} — {repr(e)}")
+        pm25 = pd.NA
+
+    return pm25
+
+
+def CONUS(sensors):
+    sensors = sensors.copy()
+    years = sensors["Time"].dt.year.unique()
+
+    nc_files = []
+    for year in years:
+        nc_files.extend(glob.glob(f"./data/conus/*{year}*.nc"))
+
+    ds = xr.open_mfdataset(
+        nc_files,
+        combine="nested",
+        concat_dim="TSTEP",
+        decode_cf=False
+    )
+
+    ds = decode_times(ds).load()
+
+    proj = Proj(
+        proj='lcc',
+        lat_1=ds.attrs['P_ALP'],
+        lat_2=ds.attrs['P_BET'],
+        lat_0=ds.attrs['YCENT'],
+        lon_0=ds.attrs['XCENT'],
+        x_0=0,
+        y_0=0,
+        ellps='sphere'
+    )
+
+    transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
+
+    sensors["CONUS"] = sensors.apply(get_pm25_CONUS, axis=1, args=(ds, transformer))
+
+    return sensors
+
 def main() -> None:
     parse_args()
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [MERRA2]
+    sources = [CONUS]
 
     for file in files:
         print(f"Reading {file.name}")
@@ -252,6 +324,8 @@ def main() -> None:
             sensors = fmt_sensors(sensors)
             sensors = source(sensors)
             print(sensors)
+            import IPython
+            IPython.embed()
         save(sensors)
 
 if __name__ == "__main__":
