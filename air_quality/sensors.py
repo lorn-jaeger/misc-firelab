@@ -70,16 +70,16 @@ def get_unique(sensors):
 
     return result
 
-def AIRNOW(sensors):
+def AIRNOW(sensors, name):
     sensors["AIRNOW"] = pd.NA
     return sensors
 
-def MERRA2(sensors):
+def MERRA2(sensors, name):
     sensors["MEERA2R"] = pd.NA
 
     return sensors
 
-def MERRA2R(sensors):
+def MERRA2R(sensors, name):
     sensors["MEERA2R"] = pd.NA
 
     return sensors
@@ -123,7 +123,7 @@ def get_pm25_CONUS(row, ds, transformer):
     return pm25
 
 
-def CONUS(sensors):
+def CONUS(sensors, name):
     sensors = sensors.copy()
     years = sensors["Time"].dt.year.unique()
 
@@ -149,6 +149,7 @@ def CONUS(sensors):
         y_0=0,
         ellps="sphere"
     )
+
     transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
 
     lon_arr = sensors["Longitude"].to_numpy()
@@ -185,19 +186,42 @@ def CONUS(sensors):
     sensors["CONUS"] = out
     return sensors
 
+def fmt_ee_output(file):
+    pass
+
+def CAMS(sensors, name):
+    sensors["CAMS"] = pd.NA
+
+    data = pd.read_csv(f"cams_{name}", low_memory=False)
+
+    data = data.rename(columns={
+        "lat": "Latitude",
+        "lon": "Longitude",
+        "time": "Time",
+    })
+
+    data = data[["Latitude", "Longitude", "Time", "first"]]
+
+    sensors = sensors.merge(data, on=["Latitude", "Longitude", "Time"], how="left")
+    sensors["CAMS"] = sensors["first"]
+    sensors = sensors.drop(columns=["first"])
+
+    return sensors
+
+
 def main() -> None:
     parse_args()
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS]
+    sources = [CAMS]
 
     for file in files:
         print(f"Reading {file.name}")
         sensors = pd.read_csv(file, low_memory=False)
         for source in sources:
             sensors = fmt_sensors(sensors)
-            sensors = source(sensors)
+            sensors = source(sensors, file.name)
         save(sensors, file.name)
 
 if __name__ == "__main__":
