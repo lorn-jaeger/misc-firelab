@@ -215,6 +215,7 @@ def CAMS(sensors, name):
 
     sensors = sensors.merge(data, on=["Latitude", "Longitude", "Time"], how="left")
     sensors["CAMS"] = sensors["first"]
+    sensors["CAMS"] = sensors["CAMS"] * 1_000_000_000
     sensors = sensors.drop(columns=["first"])
 
     return sensors
@@ -225,16 +226,17 @@ def main() -> None:
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CAMS]
+    sources = [CAMS, CONUS]
 
     for file in files:
         print(f"Reading {file.name}")
         sensors = pd.read_csv(file, low_memory=False)
+        sensors = fmt_sensors(sensors)
         print(f"Processing {file.name}")
         for source in sources:
             print(f"{source.__name__}...")
-            sensors = fmt_sensors(sensors)
             sensors = source(sensors, file.name)
+            print(sensors)
         save(sensors, file.name)
 
 if __name__ == "__main__":
