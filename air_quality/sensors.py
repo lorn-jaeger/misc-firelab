@@ -50,7 +50,7 @@ def parse_args():
         SENSOR_PATH = TEST_PATH
 
 def save(file, name):
-    file.to_csv(f"data/out/out{name}", index=False)
+    file.to_csv(f"data/out/out_{name}", index=False)
 
 
 import re
@@ -67,8 +67,13 @@ def try_auth():
 def fmt_sensors(sensors):
     sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
     sensors['Time'] = sensors['Date GMT'] + pd.to_timedelta(sensors['Time GMT'] + ':00')
+
+    sensors["MEERA2R"] = pd.NA
+    sensors["CONUS"] = pd.NA
+    sensors["CAMS"] = pd.NA
+    sensors["MERRA2"] = pd.NA
     
-    sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement"]]
+    sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
 
     return sensors
 
@@ -78,19 +83,6 @@ def get_unique(sensors):
 
     return result
 
-def AIRNOW(sensors, name):
-    sensors["AIRNOW"] = pd.NA
-    return sensors
-
-def MERRA2(sensors, name):
-    sensors["MEERA2R"] = pd.NA
-
-    return sensors
-
-def MERRA2R(sensors, name):
-    sensors["MEERA2R"] = pd.NA
-
-    return sensors
 
 def decode_times(ds):
     sdate = ds.attrs["SDATE"]
@@ -221,6 +213,81 @@ def CAMS(sensors, name):
     return sensors
 
 
+def MERRA2(sensors, name):
+    sensors = sensors.copy()
+    year = name.split("_")[-1].split(".")[0]
+    nc4_dir = Path("./data/merra2/")
+    nc4_files = sorted(nc4_dir.glob(f"*Nx.{year}*.nc4"))
+
+    ds = xr.open_mfdataset(nc4_files, combine="by_coords")
+
+    sensors["time_np"] = pd.to_datetime(sensors["Time"]).astype("datetime64[ns]")
+    sensors["lat"] = sensors["Latitude"]
+    sensors["lon"] = sensors["Longitude"]
+
+    variables = [
+        "SSSMASS25",   
+        "OCSMASS",    
+        "BCSMASS",   
+        "SO4SMASS",  
+        "DUSMASS25" 
+    ]
+
+    for var in variables:
+        interp = ds[var].interp(
+            time=xr.DataArray(sensors["time_np"], dims="sensor"),
+            lat=xr.DataArray(sensors["lat"], dims="sensor"),
+            lon=xr.DataArray(sensors["lon"], dims="sensor"),
+            method="nearest"
+        )
+        sensors[var] = interp.values
+
+    '''
+    HOW DO I OBTAIN SURFACE PM2.5 CONCENTRATION IN MERRA-2?
+
+    Using fields from the 2D tavg1_2d_aer_Nx collection, the concentration of particulate matter can be computed using the following formula: PM2.5 = DUSMASS25 + OCSMASS+ BCSMASS + SSSMASS25 + SO4SMASS* (132.14/96.06) 
+    '''
+
+    sensors["MERRA2"] = (
+            sensors["DUSMASS25"]
+            + sensors["OCSMASS"]
+            + sensors["BCSMASS"]
+            + sensors["SSSMASS25"]
+            + sensors["SO4SMASS"] * (132.14 / 96.06)
+    )
+
+    sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
+
+    return sensors
+
+def MERRA2R(sensors, name):
+    sensors = sensors.copy()
+    sensors["MEERA2R"] = pd.NA
+    year = name.split("_")[-1].split(".")[0]
+    nc4_dir = Path("./data/merra2r/")
+    nc4_files = sorted(nc4_dir.glob(f"*V1.{year}*.nc"))
+
+    ds = xr.open_mfdataset(nc4_files, combine="by_coords")
+
+    sensors["time_np"] = pd.to_datetime(sensors["Time"]).astype("datetime64[ns]")
+    sensors["lat"] = sensors["Latitude"]
+    sensors["lon"] = sensors["Longitude"]
+
+    var = "MERRA2_CNN_Surface_PM25" 
+
+    interp = ds[var].interp(
+        time=xr.DataArray(sensors["time_np"], dims="sensor"),
+        lat=xr.DataArray(sensors["lat"], dims="sensor"),
+        lon=xr.DataArray(sensors["lon"], dims="sensor"),
+        method="nearest"
+    )
+    sensors["MERRA2R"] = interp.values
+
+    sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
+
+    return sensors
+
+
 def main() -> None:
     parse_args()
     try_auth()
@@ -235,7 +302,10 @@ def main() -> None:
         print(f"Processing {file.name}")
         for source in sources:
             print(f"{source.__name__}...")
-            sensors = source(sensors, file.name)
+            try:
+                sensors = source(sensors, file.name)
+            except:
+                print(f"Error processing {file.name}")
             print(sensors)
         save(sensors, file.name)
 
