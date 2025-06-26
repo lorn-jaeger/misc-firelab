@@ -35,7 +35,7 @@ def get_point_data(s: pd.DataFrame):
 
 
 def process_fire(fire_name: str, fire_data: dict, sensors: pd.DataFrame, writer: csv.writer, code):
-    merra_data_dir = Path("/home/home/Code/Fire/EE_Wildfire/air_quality/data")
+    merra_data_dir = Path("/home/home/Code/FireLab/EE_Wildfire/air_quality/data")
     for path in merra_data_dir.iterdir():
         if path.is_dir() and "2025" in path.name:
             shutil.rmtree(path)

@@ -68,7 +68,7 @@ def fmt_sensors(sensors):
     sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
     sensors['Time'] = sensors['Date GMT'] + pd.to_timedelta(sensors['Time GMT'] + ':00')
 
-    sensors["MEERA2R"] = pd.NA
+    sensors["MERRA2R"] = pd.NA
     sensors["CONUS"] = pd.NA
     sensors["CAMS"] = pd.NA
     sensors["MERRA2"] = pd.NA
@@ -254,7 +254,7 @@ def MERRA2(sensors, name):
             + sensors["BCSMASS"]
             + sensors["SSSMASS25"]
             + sensors["SO4SMASS"] * (132.14 / 96.06)
-    )
+    )  * 1_000_000_000
 
     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
 
@@ -262,12 +262,12 @@ def MERRA2(sensors, name):
 
 def MERRA2R(sensors, name):
     sensors = sensors.copy()
-    sensors["MEERA2R"] = pd.NA
+    sensors["MERRA2R"] = pd.NA
     year = name.split("_")[-1].split(".")[0]
     nc4_dir = Path("./data/merra2r/")
-    nc4_files = sorted(nc4_dir.glob(f"*V1.{year}*.nc"))
+    nc4_files = sorted(nc4_dir.glob(f"*V1.{year}*.nc4*"))
 
-    ds = xr.open_mfdataset(nc4_files, combine="by_coords")
+    ds = xr.open_mfdataset(nc4_files, combine="by_coords", decode_times=True)
 
     sensors["time_np"] = pd.to_datetime(sensors["Time"]).astype("datetime64[ns]")
     sensors["lat"] = sensors["Latitude"]
@@ -280,7 +280,8 @@ def MERRA2R(sensors, name):
         lat=xr.DataArray(sensors["lat"], dims="sensor"),
         lon=xr.DataArray(sensors["lon"], dims="sensor"),
         method="nearest"
-    )
+    ) 
+
     sensors["MERRA2R"] = interp.values
 
     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
@@ -293,7 +294,7 @@ def main() -> None:
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CAMS, CONUS]
+    sources = [CONUS, CAMS, MERRA2, MERRA2R]
 
     for file in files:
         print(f"Reading {file.name}")
@@ -302,10 +303,7 @@ def main() -> None:
         print(f"Processing {file.name}")
         for source in sources:
             print(f"{source.__name__}...")
-            try:
-                sensors = source(sensors, file.name)
-            except:
-                print(f"Error processing {file.name}")
+            sensors = source(sensors, file.name)
             print(sensors)
         save(sensors, file.name)
 

@@ -8,5 +8,6 @@ token.json
 *.nc
 *.nc.part
 *__pycache__*
+*ipynb*
 
 
