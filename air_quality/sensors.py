@@ -64,18 +64,15 @@ def get_year(name: str) -> int:
 def try_auth():
     geemap.ee_initialize()
 
-def fmt_sensors(sensors):
-    sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
-    sensors['Time'] = sensors['Date GMT'] + pd.to_timedelta(sensors['Time GMT'] + ':00')
 
-    sensors["MERRA2R"] = pd.NA
-    sensors["CONUS"] = pd.NA
-    sensors["CAMS"] = pd.NA
-    sensors["MERRA2"] = pd.NA
-    
-    sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
-
-    return sensors
+def fmt_sensors(df):
+    date = pd.to_datetime(df["Date GMT"])           # UTC daylight-agnostic
+    time = pd.to_timedelta(df["Time GMT"], unit="h")
+    df["Time"] = (date + time).dt.tz_localize("UTC")
+    df["Time_cst"] = df["Time"].dt.tz_convert("Etc/GMT+6").tz_localize(None)
+    return df[["Time_utc", "Time_cst", "Latitude", "Longitude",
+               "Sample Measurement"]].assign(CONUS=pd.NA, MERRA2=pd.NA,
+                                             MERRA2R=pd.NA, CAMS=pd.NA)
 
 def get_unique(sensors):
     result = sensors.groupby(['Latitude', 'Longitude'])['Time'].agg(['min', 'max']).reset_index()
@@ -83,22 +80,37 @@ def get_unique(sensors):
 
     return result
 
+from datetime import datetime, timedelta
 
-def decode_times(ds):
-    sdate = ds.attrs["SDATE"]
-    tstep = ds.attrs["TSTEP"]
 
-    year = int(str(sdate)[:4])
-    jday = int(str(sdate)[4:])
-    base_time = datetime(year, 1, 1) + timedelta(days=jday - 1)
+def add_time_coord(ds):
+    sdate = int(ds.attrs["SDATE"])          # e.g. 2017001
+    tstep = int(ds.attrs["TSTEP"])          # e.g. 10000 = 1 h
+    year   = sdate // 1000                  # 2017
+    jday   = sdate % 1000                   # 001
+    base   = datetime(year, 1, 1) + timedelta(days=jday - 1)  # ←  minus 1
 
-    step_hours = int(tstep // 10000)
-    times = [base_time + timedelta(hours=int(i) * step_hours) for i in range(ds.dims["TSTEP"])]
+    step_h = tstep // 10000
+    nstep  = ds.dims["TSTEP"]
 
-    ds = ds.assign_coords(time=("TSTEP", times))
-    ds = ds.swap_dims({"TSTEP": "time"})  
-    return ds
+    times = pd.date_range(base, periods=nstep, freq=f"{step_h}H")
+    return ds.assign_coords(time=("TSTEP", times)).swap_dims({"TSTEP": "time"})
 
+# def decode_times(ds):
+#     sdate = ds.attrs["SDATE"]
+#     tstep = ds.attrs["TSTEP"]
+#
+#     year = int(str(sdate)[:4])
+#     jday = int(str(sdate)[4:])
+#     base_time = datetime(year, 1, 1) + timedelta(days=jday - 1)
+#
+#     step_hours = int(tstep // 10000)
+#     times = [base_time + timedelta(hours=int(i) * step_hours) for i in range(ds.dims["TSTEP"])]
+#
+#     ds = ds.assign_coords(time=("TSTEP", times))
+#     ds = ds.swap_dims({"TSTEP": "time"})  
+#     return ds
+#
 def get_pm25_CONUS(row, ds, transformer):
     x, y = transformer.transform(row["Longitude"], row["Latitude"])
 
@@ -122,69 +134,6 @@ def get_pm25_CONUS(row, ds, transformer):
 
     return pm25
 
-
-def CONUS(sensors, name):
-    sensors = sensors.copy()
-    years = sensors["Time"].dt.year.unique()
-
-    nc_files = []
-    for year in years:
-        nc_files.extend(glob.glob(f"./data/conus/*{year}*.nc"))
-
-    ds = xr.open_mfdataset(
-        nc_files,
-        combine="nested",
-        concat_dim="TSTEP",
-        decode_cf=False
-    )
-    ds = decode_times(ds).load()        
-
-    proj = Proj(
-        proj="lcc",
-        lat_1=ds.attrs["P_ALP"],
-        lat_2=ds.attrs["P_BET"],
-        lat_0=ds.attrs["YCENT"],
-        lon_0=ds.attrs["XCENT"],
-        x_0=0,
-        y_0=0,
-        ellps="sphere"
-    )
-
-    transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
-
-    lon_arr = sensors["Longitude"].to_numpy()
-    lat_arr = sensors["Latitude"].to_numpy()
-    x_arr, y_arr = transformer.transform(lon_arr, lat_arr)
-
-    XORIG, YORIG = ds.attrs["XORIG"], ds.attrs["YORIG"]
-    XCELL, YCELL = ds.attrs["XCELL"], ds.attrs["YCELL"]
-
-    col = ((x_arr - XORIG) // XCELL).astype("int64")
-    row = ((y_arr - YORIG) // YCELL).astype("int64")
-
-    in_bounds = (
-        (0 <= col) & (col < ds.dims["COL"]) &
-        (0 <= row) & (row < ds.dims["ROW"])
-    )
-
-    time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy(), method="nearest")
-    time_ok = time_idx >= 0
-
-    valid = in_bounds & time_ok
-
-    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values  
-
-    out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
-    if valid.any():
-        vals = pm25_grid[
-            time_idx[valid],
-            row[valid],
-            col[valid]
-        ]
-        out.iloc[valid] = vals
-
-    sensors["CONUS"] = out
-    return sensors
 
 def fmt_ee_output(file):
     pass
@@ -288,13 +237,83 @@ def MERRA2R(sensors, name):
 
     return sensors
 
+import numpy as np
+
+def CONUS(sensors, name):
+    sensors = sensors.copy()
+    years = sensors["Time"].dt.year.unique()
+
+    nc_files = []
+    for year in years:
+        nc_files.extend(glob.glob(f"./data/conus/*{year}*.nc"))
+
+ 
+    ds = xr.open_mfdataset(
+        nc_files,
+        combine="nested",
+        concat_dim="time",
+        preprocess=add_time_coord,   # run once per individual file
+        parallel=True
+    ).load()
+
+
+    
+    proj = Proj(
+        proj="lcc",
+        lat_1=ds.attrs["P_ALP"],
+        lat_2=ds.attrs["P_BET"],
+        lat_0=ds.attrs["YCENT"],
+        lon_0=ds.attrs["XCENT"],
+        x_0=0,
+        y_0=0,
+    )
+
+    transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
+
+    lon_arr = sensors["Longitude"].to_numpy()
+    lat_arr = sensors["Latitude"].to_numpy()
+    x_arr, y_arr = transformer.transform(lon_arr, lat_arr)
+
+    XORIG, YORIG = ds.attrs["XORIG"], ds.attrs["YORIG"]
+    XCELL, YCELL = ds.attrs["XCELL"], ds.attrs["YCELL"]
+
+
+    col = np.round((x_arr - XORIG) / XCELL).astype("int64")
+    row = np.round((y_arr - YORIG) / YCELL).astype("int64")
+
+    in_bounds = (
+        (0 <= col) & (col < ds.dims["COL"]) &
+        (0 <= row) & (row < ds.dims["ROW"])
+    )
+
+    time_idx = ds.indexes["time"].get_indexer(sensors["Time_cst"].to_numpy(), method="nearest")
+    time_ok = time_idx >= 0
+
+    valid = in_bounds & time_ok
+
+    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values * 1_000_000_000
+
+    out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
+    if valid.any():
+        vals = pm25_grid[
+            time_idx[valid],
+            row[valid],
+            col[valid]
+        ]
+        out.iloc[valid] = vals
+
+    sensors["CONUS"] = out
+    return sensors
+
+
+
 
 def main() -> None:
     parse_args()
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS, CAMS, MERRA2, MERRA2R]
+    sources = [CONUS]
 
     for file in files:
         print(f"Reading {file.name}")
