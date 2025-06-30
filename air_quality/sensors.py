@@ -94,7 +94,11 @@ def add_time_coord(ds):
     nstep  = ds.dims["TSTEP"]
 
     times = pd.date_range(base, periods=nstep, freq=f"{step_h}H")
-    return ds.assign_coords(time=("TSTEP", times)).swap_dims({"TSTEP": "time"})
+    temp = ds.assign_coords(time=("TSTEP", times))
+    print(ds)
+
+    return temp
+
 
 # def decode_times(ds):
 #     sdate = ds.attrs["SDATE"]
@@ -251,9 +255,8 @@ def CONUS(sensors, name):
     ds = xr.open_mfdataset(
         nc_files,
         combine="nested",
-        concat_dim="time",
-        preprocess=add_time_coord,   # run once per individual file
-        parallel=True
+        concat_dim="TSTEP",
+        decode_cf=False
     ).load()
 
 
