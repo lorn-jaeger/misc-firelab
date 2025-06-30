@@ -1,5 +1,6 @@
 from pathlib import Path
 import glob
+import numpy as np
 from datetime import datetime, timedelta
 import pandas as pd
 import argparse
@@ -80,63 +81,6 @@ def get_unique(sensors):
 
     return result
 
-from datetime import datetime, timedelta
-
-
-def add_time_coord(ds):
-    sdate = int(ds.attrs["SDATE"])          # e.g. 2017001
-    tstep = int(ds.attrs["TSTEP"])          # e.g. 10000 = 1 h
-    year   = sdate // 1000                  # 2017
-    jday   = sdate % 1000                   # 001
-    base   = datetime(year, 1, 1) + timedelta(days=jday - 1)  # ←  minus 1
-
-    step_h = tstep // 10000
-    nstep  = ds.dims["TSTEP"]
-
-    times = pd.date_range(base, periods=nstep, freq=f"{step_h}H")
-    temp = ds.assign_coords(time=("TSTEP", times))
-    print(ds)
-
-    return temp
-
-
-# def decode_times(ds):
-#     sdate = ds.attrs["SDATE"]
-#     tstep = ds.attrs["TSTEP"]
-#
-#     year = int(str(sdate)[:4])
-#     jday = int(str(sdate)[4:])
-#     base_time = datetime(year, 1, 1) + timedelta(days=jday - 1)
-#
-#     step_hours = int(tstep // 10000)
-#     times = [base_time + timedelta(hours=int(i) * step_hours) for i in range(ds.dims["TSTEP"])]
-#
-#     ds = ds.assign_coords(time=("TSTEP", times))
-#     ds = ds.swap_dims({"TSTEP": "time"})  
-#     return ds
-#
-def get_pm25_CONUS(row, ds, transformer):
-    x, y = transformer.transform(row["Longitude"], row["Latitude"])
-
-    XORIG = ds.attrs['XORIG']
-    YORIG = ds.attrs['YORIG']
-    XCELL = ds.attrs['XCELL']
-    YCELL = ds.attrs['YCELL']
-
-    col = int((x - XORIG) / XCELL)
-    row_idx = int((y - YORIG) / YCELL)
-
-    if not (0 <= col < ds.dims["COL"]) or not (0 <= row_idx < ds.dims["ROW"]):
-        return pd.NA
-
-    try:
-        time_idx = ds.indexes["time"].get_indexer([row["Time"]], method="nearest")[0]
-        pm25 = ds['PM25_TOT'].isel(time=time_idx, LAY=0, ROW=row_idx, COL=col).values.item()
-    except Exception as e:
-        print(f"Failed for time: {row['Time']}, row: {row_idx}, col: {col} — {repr(e)}")
-        pm25 = pd.NA
-
-    return pm25
 
 
 def fmt_ee_output(file):
@@ -241,26 +185,34 @@ def MERRA2R(sensors, name):
 
     return sensors
 
-import numpy as np
 
 def CONUS(sensors, name):
     sensors = sensors.copy()
     years = sensors["Time"].dt.year.unique()
 
-    nc_files = []
-    for year in years:
-        nc_files.extend(glob.glob(f"./data/conus/*{year}*.nc"))
+    directory = Path("./data/conus")
+    files = sorted(str(f) for f in directory.glob(f"*{years[0]}*.nc"))
 
- 
     ds = xr.open_mfdataset(
-        nc_files,
+        files,
         combine="nested",
         concat_dim="TSTEP",
         decode_cf=False
-    ).load()
+    )
 
+    sdate = ds.attrs["SDATE"]  
+    tstep = ds.attrs["TSTEP"] 
 
-    
+    year = sdate // 1000
+    doy = sdate % 1000
+
+    start_time = datetime(year, 1, 1) + timedelta(days=int(doy) - 1)
+
+    nt = ds.sizes["TSTEP"]
+    datetimes = [start_time + timedelta(hours=i) for i in range(nt)]
+
+    ds = ds.assign_coords(time=("TSTEP", datetimes))
+
     proj = Proj(
         proj="lcc",
         lat_1=ds.attrs["P_ALP"],
@@ -307,8 +259,6 @@ def CONUS(sensors, name):
 
     sensors["CONUS"] = out
     return sensors
-
-
 
 
 def main() -> None:
