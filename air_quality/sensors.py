@@ -66,14 +66,14 @@ def try_auth():
     geemap.ee_initialize()
 
 
-def fmt_sensors(df):
-    date = pd.to_datetime(df["Date GMT"])           # UTC daylight-agnostic
-    time = pd.to_timedelta(df["Time GMT"], unit="h")
-    df["Time"] = (date + time).dt.tz_localize("UTC")
-    df["Time_cst"] = df["Time"].dt.tz_convert("Etc/GMT+6").tz_localize(None)
-    return df[["Time_utc", "Time_cst", "Latitude", "Longitude",
-               "Sample Measurement"]].assign(CONUS=pd.NA, MERRA2=pd.NA,
-                                             MERRA2R=pd.NA, CAMS=pd.NA)
+
+def fmt_sensors(sensors):
+     sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
+     sensors['Time'] = sensors['Date GMT'] + pd.to_timedelta(sensors['Time GMT'] + ':00')
+ 
+     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement"]]
+     return sensors
+
 
 def get_unique(sensors):
     result = sensors.groupby(['Latitude', 'Longitude'])['Time'].agg(['min', 'max']).reset_index()
@@ -223,30 +223,37 @@ def CONUS(sensors, name):
         y_0=0,
     )
 
+    print(ds)
+
     transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
 
-    lon_arr = sensors["Longitude"].to_numpy()
-    lat_arr = sensors["Latitude"].to_numpy()
-    x_arr, y_arr = transformer.transform(lon_arr, lat_arr)
+    x, y = transformer.transform(sensors["Longitude"].to_numpy(), sensors["Latitude"].to_numpy())
 
-    XORIG, YORIG = ds.attrs["XORIG"], ds.attrs["YORIG"]
-    XCELL, YCELL = ds.attrs["XCELL"], ds.attrs["YCELL"]
-
-
-    col = np.round((x_arr - XORIG) / XCELL).astype("int64")
-    row = np.round((y_arr - YORIG) / YCELL).astype("int64")
+    col = ((x - ds.XORIG) / ds.XCELL).astype(int)
+    row = ((y - ds.YORIG) / ds.YCELL).astype(int)
 
     in_bounds = (
         (0 <= col) & (col < ds.dims["COL"]) &
         (0 <= row) & (row < ds.dims["ROW"])
     )
 
-    time_idx = ds.indexes["time"].get_indexer(sensors["Time_cst"].to_numpy(), method="nearest")
+    ds = ds.swap_dims({"TSTEP": "time"})
+
+    print(ds)
+
+    print(col)
+    print(row)
+
+
+    time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy())
+
+    print(time_idx)
+
     time_ok = time_idx >= 0
 
     valid = in_bounds & time_ok
 
-    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values * 1_000_000_000
+    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values
 
     out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
     if valid.any():
@@ -258,6 +265,7 @@ def CONUS(sensors, name):
         out.iloc[valid] = vals
 
     sensors["CONUS"] = out
+    
     return sensors
 
 
