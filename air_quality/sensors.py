@@ -186,6 +186,56 @@ def MERRA2R(sensors, name):
     return sensors
 
 
+def to_colrow(sensors, name):
+    sensors = get_unique(sensors.copy())
+
+    directory = Path("./data/conus")
+    files = sorted(str(f) for f in directory.glob(f"*2016*.nc"))
+
+    ds = xr.open_mfdataset(
+        files,
+        combine="nested",
+        concat_dim="TSTEP",
+        decode_cf=False
+    )
+
+    sdate = ds.attrs["SDATE"]  
+    tstep = ds.attrs["TSTEP"] 
+
+    year = sdate // 1000
+    doy = sdate % 1000
+
+    start_time = datetime(year, 1, 1) + timedelta(days=int(doy) - 1)
+
+    nt = ds.sizes["TSTEP"]
+    datetimes = [start_time + timedelta(hours=i) for i in range(nt)]
+
+    ds = ds.assign_coords(time=("TSTEP", datetimes))
+
+    proj = Proj(
+        proj="lcc",
+        lat_1=ds.attrs["P_ALP"],
+        lat_2=ds.attrs["P_BET"],
+        lat_0=ds.attrs["YCENT"],
+        lon_0=ds.attrs["XCENT"],
+        x_0=0,
+        y_0=0,
+    )
+
+    transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
+
+    x, y = transformer.transform(sensors["Longitude"].to_numpy(), sensors["Latitude"].to_numpy())
+
+    sensors["Longitude"] = x
+    sensors["Latitude"] = y
+
+    return sensors
+
+
+    
+
+
+
 def CONUS(sensors, name):
     sensors = sensors.copy()
     years = sensors["Time"].dt.year.unique()
@@ -265,7 +315,9 @@ def CONUS(sensors, name):
         out.iloc[valid] = vals
 
     sensors["CONUS"] = out
-    
+
+    import IPython
+    IPython.embed()
     return sensors
 
 
@@ -274,7 +326,7 @@ def main() -> None:
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS]
+    sources = [to_colrow]
 
     for file in files:
         print(f"Reading {file.name}")
