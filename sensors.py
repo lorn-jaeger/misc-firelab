@@ -1,6 +1,19 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# ### Target Variable Evaluation for PM 2.5 Estimation
+# 
+# Rupert is aiming to predict the air quality impact of fire (broad statement for now). To do this we need some source of truth to evaluate our predictions against and to use as a target variable when we're training our models. The obvious source of these readings are ground sensors. While there is a large dataset of hourly resolution sensor data available from [AirNow](https://aqs.epa.gov/aqsweb/airdata/download_files.html), it's still sparse compared to the overall area of the US. To cope with that we're going to try and use the air quality estimates from global atmospheric reanalysis datasets to fill in the areas missing from sensor datasets. The aim of this notebook is to evaluate several of these and see if they suit our purposes. 
+# 
+# ### The Datasets!
+# Data frequency, start/end dates, reanalyis type, and other general information. 
+# 
+# ### AirNow
+# #### CAMS
+# #### MERRA2 
+# #### MERRA2R
+# #### CONUS
+
 # In[1]:
 
 
@@ -11,28 +24,27 @@ non_frm = pd.read_csv("./air_quality/data/out/out_hourly_88502_2016.csv")
 data = pd.concat([frm, non_frm], ignore_index=True)
 
 
-
-# In[2]:
+# In[ ]:
 
 
 data
 data["Sample Measurement"] = data["Sample Measurement"].where(data["Sample Measurement"] >= 2, 1)
 
 
-# In[3]:
+# In[ ]:
 
 
 data.isna().sum().sort_values(ascending=False)
 
 
-# In[4]:
+# In[ ]:
 
 
 count = data[["Latitude", "Longitude"]].drop_duplicates().shape[0]
 print(f"Number of sensors: {count}")
 
 
-# In[5]:
+# In[ ]:
 
 
 from sklearn.linear_model import LinearRegression
@@ -93,25 +105,25 @@ correlations = pd.DataFrame(results).T
 print(correlations)
 
 
-# In[6]:
+# In[ ]:
 
 
 data["CONUS"].min()
 
 
-# In[7]:
+# In[ ]:
 
 
 data["CONUS"].min()
 
 
-# In[8]:
+# In[ ]:
 
 
 print(data["Sample Measurement"].max())
 
 
-# In[9]:
+# In[ ]:
 
 
 max_idx = data["CONUS"].idxmin()
@@ -119,7 +131,7 @@ value = data.loc[max_idx, "Sample Measurement"]
 print(value)
 
 
-# In[10]:
+# In[ ]:
 
 
 num_under_1 = data["CONUS"].dropna().lt(1).sum()
