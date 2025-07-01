@@ -70,8 +70,15 @@ def try_auth():
 def fmt_sensors(sensors):
      sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
      sensors['Time'] = sensors['Date GMT'] + pd.to_timedelta(sensors['Time GMT'] + ':00')
+
+     sensors["CONUS"] = pd.NA
+     sensors["MERRA2"] = pd.NA
+     sensors["MERRA2R"] = pd.NA
+     sensors["CAMS"] = pd.NA
  
-     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement"]]
+     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "CONUS", "MERRA2", "MERRA2R", "CAMS"]]
+
+     
      return sensors
 
 
@@ -316,8 +323,6 @@ def CONUS(sensors, name):
 
     sensors["CONUS"] = out
 
-    import IPython
-    IPython.embed()
     return sensors
 
 
@@ -326,7 +331,7 @@ def main() -> None:
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [to_colrow]
+    sources = [CONUS, MERRA2, MERRA2R, CAMS]
 
     for file in files:
         print(f"Reading {file.name}")
@@ -335,7 +340,11 @@ def main() -> None:
         print(f"Processing {file.name}")
         for source in sources:
             print(f"{source.__name__}...")
-            sensors = source(sensors, file.name)
+            try:
+                sensors = source(sensors, file.name)
+            except Exception as e:
+                print(f"Error processing {source.__name__} for {file.name}: {e}")
+                continue
             print(sensors)
         save(sensors, file.name)
 
