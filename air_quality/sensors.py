@@ -2,8 +2,12 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
 import argparse
+import warnings
 from pyproj import Proj, Transformer
 import xarray as xr
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 SENSOR_PATH = Path("data/sensors/using")
 TEST_PATH = Path("data/test/sensors")
@@ -107,6 +111,12 @@ def MERRA2(sensors, name):
             method="nearest"
         )
         sensors[var] = interp.values
+
+    '''
+    HOW DO I OBTAIN SURFACE PM2.5 CONCENTRATION IN MERRA-2?
+
+    Using fields from the 2D tavg1_2d_aer_Nx collection, the concentration of particulate matter can be computed using the following formula: PM2.5 = DUSMASS25 + OCSMASS+ BCSMASS + SSSMASS25 + SO4SMASS* (132.14/96.06) 
+    '''
 
     sensors["MERRA2"] = (
             sensors["DUSMASS25"]
