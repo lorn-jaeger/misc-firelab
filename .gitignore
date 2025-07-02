@@ -9,5 +9,6 @@ token.json
 *.nc.part
 *__pycache__*
 *ipynb*
+shapefiles/
 
 

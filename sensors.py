@@ -8,7 +8,7 @@
 # ### The Datasets!
 # Data frequency, start/end dates, reanalyis type, and other general information. 
 # 
-# ### AirNow
+# #### AirNow
 # #### CAMS
 # #### MERRA2 
 # #### MERRA2R
@@ -24,27 +24,27 @@ non_frm = pd.read_csv("./air_quality/data/out/out_hourly_88502_2016.csv")
 data = pd.concat([frm, non_frm], ignore_index=True)
 
 
-# In[ ]:
+# In[2]:
 
 
 data
 data["Sample Measurement"] = data["Sample Measurement"].where(data["Sample Measurement"] >= 2, 1)
 
 
-# In[ ]:
+# In[3]:
 
 
 data.isna().sum().sort_values(ascending=False)
 
 
-# In[ ]:
+# In[4]:
 
 
 count = data[["Latitude", "Longitude"]].drop_duplicates().shape[0]
 print(f"Number of sensors: {count}")
 
 
-# In[ ]:
+# In[20]:
 
 
 from sklearn.linear_model import LinearRegression
@@ -60,8 +60,8 @@ results = {}
 for col in sat_cols:
     subset = data[[base_col, col]].dropna()
     subset = subset[
-        (subset[base_col].between(1, 1000)) &
-        (subset[col].between(1, 1000))
+        (subset[base_col].between(0.1, 1000)) &
+        (subset[col].between(0.1, 1000))
     ]
 
     if subset.empty:
@@ -105,33 +105,33 @@ correlations = pd.DataFrame(results).T
 print(correlations)
 
 
-# In[ ]:
+# In[12]:
 
 
-data["CONUS"].min()
+data["CONUS"].max()
 
 
-# In[ ]:
+# In[16]:
 
 
-data["CONUS"].min()
+data.loc[data['CONUS'].idxmin()]
 
 
-# In[ ]:
+# In[17]:
 
 
-print(data["Sample Measurement"].max())
+print(data["Sample Measurement"].min())
 
 
-# In[ ]:
+# In[13]:
 
 
-max_idx = data["CONUS"].idxmin()
+max_idx = data["CONUS"].idxmax()
 value = data.loc[max_idx, "Sample Measurement"]
 print(value)
 
 
-# In[ ]:
+# In[10]:
 
 
 num_under_1 = data["CONUS"].dropna().lt(1).sum()

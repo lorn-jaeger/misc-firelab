@@ -1,41 +1,21 @@
 from pathlib import Path
-import glob
-import numpy as np
 from datetime import datetime, timedelta
 import pandas as pd
 import argparse
-import warnings
-from ee.geometry import Geometry
-from ee.imagecollection import ImageCollection
-from tqdm import tqdm
 from pyproj import Proj, Transformer
 import xarray as xr
-
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    import geemap
 
 SENSOR_PATH = Path("data/sensors/using")
 TEST_PATH = Path("data/test/sensors")
 OUT_PATH = Path("data/out")
 
 def clear_output():
-    """
-    Clear the csv output.
-    """
     for file in OUT_PATH.iterdir():
         if file.is_file():
             file.unlink()
 
 
 def parse_args():
-    """
-    Simple argument parser with some useful commands.
-    Allows me to set a test dir and clear the output.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--clear-out", action="store_true")
     parser.add_argument("--test", action="store_true")
@@ -52,20 +32,6 @@ def parse_args():
 
 def save(file, name):
     file.to_csv(f"data/out/out_{name}", index=False)
-
-
-import re
-
-def get_year(name: str) -> int:
-    match = re.search(r"\d{4}", name)
-    if match:
-        return int(match.group(0))
-    raise ValueError(f"No 4-digit year found in filename: {name}")
-
-def try_auth():
-    geemap.ee_initialize()
-
-
 
 def fmt_sensors(sensors):
      sensors['Date GMT'] = pd.to_datetime(sensors['Date GMT'])
@@ -88,10 +54,6 @@ def get_unique(sensors):
 
     return result
 
-
-
-def fmt_ee_output(file):
-    pass
 
 def CAMS(sensors, name):
     sensors["CAMS"] = pd.NA
@@ -146,12 +108,6 @@ def MERRA2(sensors, name):
         )
         sensors[var] = interp.values
 
-    '''
-    HOW DO I OBTAIN SURFACE PM2.5 CONCENTRATION IN MERRA-2?
-
-    Using fields from the 2D tavg1_2d_aer_Nx collection, the concentration of particulate matter can be computed using the following formula: PM2.5 = DUSMASS25 + OCSMASS+ BCSMASS + SSSMASS25 + SO4SMASS* (132.14/96.06) 
-    '''
-
     sensors["MERRA2"] = (
             sensors["DUSMASS25"]
             + sensors["OCSMASS"]
@@ -193,72 +149,13 @@ def MERRA2R(sensors, name):
     return sensors
 
 
-def to_colrow(sensors, name):
-    sensors = get_unique(sensors.copy())
-
-    directory = Path("./data/conus")
-    files = sorted(str(f) for f in directory.glob(f"*2016*.nc"))
-
-    ds = xr.open_mfdataset(
-        files,
-        combine="nested",
-        concat_dim="TSTEP",
-        decode_cf=False
-    )
-
-    sdate = ds.attrs["SDATE"]  
-    tstep = ds.attrs["TSTEP"] 
-
-    year = sdate // 1000
-    doy = sdate % 1000
-
-    start_time = datetime(year, 1, 1) + timedelta(days=int(doy) - 1)
-
-    nt = ds.sizes["TSTEP"]
-    datetimes = [start_time + timedelta(hours=i) for i in range(nt)]
-
-    ds = ds.assign_coords(time=("TSTEP", datetimes))
-
-    proj = Proj(
-        proj="lcc",
-        lat_1=ds.attrs["P_ALP"],
-        lat_2=ds.attrs["P_BET"],
-        lat_0=ds.attrs["YCENT"],
-        lon_0=ds.attrs["XCENT"],
-        x_0=0,
-        y_0=0,
-    )
-
-    transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
-
-    x, y = transformer.transform(sensors["Longitude"].to_numpy(), sensors["Latitude"].to_numpy())
-
-    sensors["Longitude"] = x
-    sensors["Latitude"] = y
-
-    return sensors
-
-
-    
-
-# heavily commented so i remember what i was doing
 def CONUS(sensors, name):
     sensors = sensors.copy()
     years = sensors["Time"].dt.year.unique()
 
-    # file name format is COMBINE_ACONC_v532_intel_NOAA_fire_201609_PM25.nc
-    # reading them in sorted gives you each month of data in order. year[0]
-    # accounts for there being multiple years of data withing the sensor
-    # dataset. the first should be the correct year
     directory = Path("./data/conus")
     files = sorted(str(f) for f in directory.glob(f"*{years[0]}*.nc"))
     
-    # Since the files are correctly sorted chronologically concat_dims gets
-    # every month in order. combine="nested" allows me to specify a dimsension
-    # to concatenate the xarray. in this case since they are just slices in time
-    # of the same area we just concat based on the time dimension. since the 
-    # format is kind of weird and xarray does not decode it automatically we
-    # set decode_cf to false
     ds = xr.open_mfdataset(
         files,
         combine="nested",
@@ -266,7 +163,6 @@ def CONUS(sensors, name):
         decode_cf=False
     )
 
-    # convert from 
     sdate = ds.attrs["SDATE"]  
     year = sdate // 1000
     doy = sdate % 1000
@@ -326,92 +222,11 @@ def CONUS(sensors, name):
     return sensors
 
 
-from pathlib import Path
-from datetime import datetime, timedelta
-
-import numpy as np
-import pandas as pd
-import xarray as xr
-from pyproj import Proj, Transformer
-from scipy.spatial import cKDTree
-
-def CONUS_2(sensors, name):
-    sensors = sensors.copy()
-
-    years = sensors["Time"].dt.year.unique()
-    directory = Path("./data/conus")
-    files = sorted(str(f) for f in directory.glob(f"*{years[0]}*_PM25.nc"))
-
-    ds = xr.open_mfdataset(
-        files,
-        combine="nested",
-        concat_dim="TSTEP",
-        decode_cf=False,
-    )
-
-   
-    sdate = int(ds.attrs["SDATE"])          # ensure plain int
-    year = sdate // 1000
-    doy  = sdate % 1000
-
-    base = datetime(int(year), 1, 1) + timedelta(days=int(doy) - 1)
-    times = [base + timedelta(hours=i) for i in range(int(ds.sizes["TSTEP"]))]
-    ds = ds.assign_coords(time=("TSTEP", times)).swap_dims({"TSTEP": "time"})
-
-
-    proj_lcc = Proj(
-        proj="lcc",
-        lat_1=ds.attrs["P_ALP"],
-        lat_2=ds.attrs["P_BET"],
-        lat_0=ds.attrs["YCENT"],
-        lon_0=ds.attrs["XCENT"],
-        x_0=0,
-        y_0=0,
-    )
-    inv = Transformer.from_proj(proj_lcc, "epsg:4326", always_xy=True)
-
-    ncol, nrow = ds.dims["COL"], ds.dims["ROW"]
-    x_axis = ds.attrs["XORIG"] + (np.arange(ncol) + 0.5) * ds.attrs["XCELL"]
-    y_axis = ds.attrs["YORIG"] + (np.arange(nrow) + 0.5) * ds.attrs["YCELL"]
-    X, Y = np.meshgrid(x_axis, y_axis)
-    lon_c, lat_c = inv.transform(X, Y)
-
-    centres = np.column_stack([lon_c.ravel(), lat_c.ravel()])
-    tree = cKDTree(centres)
-
-    sensor_xy = np.column_stack([sensors["Longitude"].to_numpy(), sensors["Latitude"].to_numpy()])
-    _, idx_flat = tree.query(sensor_xy, k=1)
-    row = idx_flat // ncol
-    col = idx_flat % ncol
-
-    in_bounds = (
-        (sensors["Longitude"] >= lon_c.min())
-        & (sensors["Longitude"] <= lon_c.max())
-        & (sensors["Latitude"] >= lat_c.min())
-        & (sensors["Latitude"] <= lat_c.max())
-    ).to_numpy()
-
-    # exact time matching: -1 means “no exact hit”
-    time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy())
-    time_ok = time_idx >= 0
-
-    valid = in_bounds & time_ok
-    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values  # (time, row, col)
-
-    out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
-    if valid.any():
-        out.iloc[valid] = pm25_grid[time_idx[valid], row[valid], col[valid]]
-
-    sensors["CONUS"] = out
-    return sensors
-
-
 def main() -> None:
     parse_args()
-    try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS_2]
+    sources = [CONUS, CAMS, MERRA2, MERRA2R]
 
     for file in files:
         print(f"Reading {file.name}")
@@ -431,159 +246,4 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-
-# def parse_gee_region(raw):
-#     headers = raw[0]
-#     data = raw[1:]
-#
-#     df = pd.DataFrame(data, columns=headers)
-#
-#     df = df[df["time"].apply(lambda x: isinstance(x, (int, float)))]
-#
-#     df["Time"] = pd.to_datetime(df["time"], unit="ms")
-#     df["Longitude"] = df["longitude"].astype(float)
-#     df["Latitude"] = df["latitude"].astype(float)
-#     df["pm25"] = df["particulate_matter_d_less_than_25_um_surface"].astype(float)
-#
-#     df["pm25"] *= 1_000_000_000
-#
-#     return df[["Time", "Longitude", "Latitude", "pm25"]]
-#
-# def CAMS(sensors):
-#     sensors["CAMS"] = pd.NA
-#
-#     cams = (
-#         ImageCollection("ECMWF/CAMS/NRT")
-#         .select("particulate_matter_d_less_than_25_um_surface")
-#         .filter('model_initialization_hour == 0')
-#     )
-#
-#     cams_data = pd.DataFrame(columns=["Time", "Longitude", "Latitude", "pm25"]) #type: ignore
-#
-#     locations = get_unique(sensors)
-#     outer = tqdm(locations.iterrows(), total=len(locations), desc="Fetching CAMS data", position=0)
-#     # can use apply instead but this is only 1000 iterations
-#     # most of the time is taken by api calls to earth engine
-#     for _, row in outer:
-#         point = Geometry.Point(row["Longitude"], row["Latitude"])
-#         # batching is needed so we don't hit the 3000 item limit
-#         months = pd.date_range(pd.to_datetime(row["Start Time"]), pd.to_datetime(row["End Time"]), freq="ME")
-#         inner = tqdm(months, desc="Monthly data", leave=False, position=1)
-#         for month in inner:
-#             start = month
-#             end = month + pd.DateOffset(months=1)
-#
-#             # skip if start is before the start of the dataset
-#             if start < pd.Timestamp("2016-06-23"):
-#                 continue
-#
-#             try:
-#
-#                 monthly_data = (
-#                     cams
-#                     .filterBounds(point)
-#                     .filterDate(start, end)
-#                     .getRegion(point, scale=10_000)
-#                     .getInfo()
-#                 )
-#                 monthly_data = parse_gee_region(monthly_data)
-#                 # Needed overwrite. Google Earth Engine rounds lats and lons so there are slightly off
-#                 # Otherwise there will be no matches on merge
-#                 monthly_data["Latitude"] = row["Latitude"]
-#                 monthly_data["Longitude"] = row["Longitude"]
-#                 cams_data = pd.concat([cams_data, monthly_data], ignore_index=True) #type: ignore
-#             except Exception as e:
-#                 print(e)
-#                 continue
-#
-#
-#     sensors = sensors.merge(
-#         cams_data,
-#         on=["Time", "Latitude", "Longitude"],
-#         how="left"
-#     )
-#
-#     sensors["CAMS"] = sensors["pm25"]
-#     sensors.drop(columns=["pm25"], inplace=True)
-#
-#     return sensors
-#
-
-
-# from earthaccess import login, search_data, download
-# import xarray as xr
-# import pandas as pd
-# from tqdm import tqdm
-# from ee.geometry import Geometry
-#
-#
-# from earthaccess import search_data, download
-# import xarray as xr
-# import pandas as pd
-# from tqdm import tqdm
-# from pathlib import Path
-#
-# def MERRA2(sensors):
-#     sensors["MERRA2"] = pd.NA
-#     variable = "MERRA2_CNN_Surface_PM25"
-#     data = pd.DataFrame(columns=["Time", "Latitude", "Longitude", "pm25"])
-#
-#     locations = get_unique(sensors)
-#
-#     for _, row in locations.iterrows():
-#         lat, lon = row["Latitude"], row["Longitude"]
-#         start = pd.to_datetime(row["Start Time"])
-#         end = pd.to_datetime(row["End Time"])
-#         print(f"Processing sensor at {lat}, {lon} from {start} to {end}")
-#
-#         results = search_data(
-#             concept_id="C3094710982-GES_DISC",
-#             temporal=(start, end),
-#             bounding_box=(lon - 0.1, lat - 0.1, lon + 0.1, lat + 0.1),
-#         )
-#         files = download(results)
-#         if not files:
-#             continue
-#
-#         try:
-#             ds = xr.open_mfdataset(files, combine="by_coords")
-#             times = pd.date_range(start, end, freq="H")
-#             sat_pm25 = ds[variable].interp(
-#                 time=xr.DataArray(times, dims="time"),
-#                 lat=lat,
-#                 lon=lon
-#             )
-#             df = pd.DataFrame({
-#                 "Time": times,
-#                 "Latitude": lat,
-#                 "Longitude": lon,
-#                 "pm25": sat_pm25.values
-#             })
-#             data = pd.concat([data, df], ignore_index=True)
-#         except Exception as e:
-#             print(f"Failed {lat},{lon}: {e}")
-#         finally:
-#             ds.close()
-#             for f in files:
-#                 try:
-#                     Path(f).unlink()
-#                 except Exception as e:
-#                     print(f"Error deleting file {f}: {e}")
-#
-#     # Round to avoid floating-point merge mismatch
-#     data["Latitude"] = data["Latitude"].round(4)
-#     data["Longitude"] = data["Longitude"].round(4)
-#     sensors["Latitude"] = sensors["Latitude"].round(4)
-#     sensors["Longitude"] = sensors["Longitude"].round(4)
-#
-#     sensors = sensors.merge(data, on=["Time", "Latitude", "Longitude"], how="left")
-#     sensors["MERRA2"] = sensors["pm25"]
-#     sensors.drop(columns=["pm25"], inplace=True)
-#
-#     print(sensors)
-#     print(sensors.shape)
-#
-#     return sensors
-#
-#
 
