@@ -241,15 +241,24 @@ def to_colrow(sensors, name):
 
     
 
-
-
+# heavily commented so i remember what i was doing
 def CONUS(sensors, name):
     sensors = sensors.copy()
     years = sensors["Time"].dt.year.unique()
 
+    # file name format is COMBINE_ACONC_v532_intel_NOAA_fire_201609_PM25.nc
+    # reading them in sorted gives you each month of data in order. year[0]
+    # accounts for there being multiple years of data withing the sensor
+    # dataset. the first should be the correct year
     directory = Path("./data/conus")
     files = sorted(str(f) for f in directory.glob(f"*{years[0]}*.nc"))
-
+    
+    # Since the files are correctly sorted chronologically concat_dims gets
+    # every month in order. combine="nested" allows me to specify a dimsension
+    # to concatenate the xarray. in this case since they are just slices in time
+    # of the same area we just concat based on the time dimension. since the 
+    # format is kind of weird and xarray does not decode it automatically we
+    # set decode_cf to false
     ds = xr.open_mfdataset(
         files,
         combine="nested",
@@ -257,16 +266,17 @@ def CONUS(sensors, name):
         decode_cf=False
     )
 
+    # convert from 
     sdate = ds.attrs["SDATE"]  
-    tstep = ds.attrs["TSTEP"] 
-
     year = sdate // 1000
     doy = sdate % 1000
-
     start_time = datetime(year, 1, 1) + timedelta(days=int(doy) - 1)
 
-    nt = ds.sizes["TSTEP"]
-    datetimes = [start_time + timedelta(hours=i) for i in range(nt)]
+    print(sdate, year, doy, start_time, name)
+
+    n_times = ds.sizes["TSTEP"]
+    datetimes = [start_time + timedelta(hours=i) for i in range(n_times)]
+
 
     ds = ds.assign_coords(time=("TSTEP", datetimes))
 
@@ -279,8 +289,6 @@ def CONUS(sensors, name):
         x_0=0,
         y_0=0,
     )
-
-    print(ds)
 
     transformer = Transformer.from_proj("epsg:4326", proj, always_xy=True)
 
@@ -296,15 +304,7 @@ def CONUS(sensors, name):
 
     ds = ds.swap_dims({"TSTEP": "time"})
 
-    print(ds)
-
-    print(col)
-    print(row)
-
-
     time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy())
-
-    print(time_idx)
 
     time_ok = time_idx >= 0
 
@@ -326,12 +326,92 @@ def CONUS(sensors, name):
     return sensors
 
 
+from pathlib import Path
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+from pyproj import Proj, Transformer
+from scipy.spatial import cKDTree
+
+def CONUS_2(sensors, name):
+    sensors = sensors.copy()
+
+    years = sensors["Time"].dt.year.unique()
+    directory = Path("./data/conus")
+    files = sorted(str(f) for f in directory.glob(f"*{years[0]}*_PM25.nc"))
+
+    ds = xr.open_mfdataset(
+        files,
+        combine="nested",
+        concat_dim="TSTEP",
+        decode_cf=False,
+    )
+
+   
+    sdate = int(ds.attrs["SDATE"])          # ensure plain int
+    year = sdate // 1000
+    doy  = sdate % 1000
+
+    base = datetime(int(year), 1, 1) + timedelta(days=int(doy) - 1)
+    times = [base + timedelta(hours=i) for i in range(int(ds.sizes["TSTEP"]))]
+    ds = ds.assign_coords(time=("TSTEP", times)).swap_dims({"TSTEP": "time"})
+
+
+    proj_lcc = Proj(
+        proj="lcc",
+        lat_1=ds.attrs["P_ALP"],
+        lat_2=ds.attrs["P_BET"],
+        lat_0=ds.attrs["YCENT"],
+        lon_0=ds.attrs["XCENT"],
+        x_0=0,
+        y_0=0,
+    )
+    inv = Transformer.from_proj(proj_lcc, "epsg:4326", always_xy=True)
+
+    ncol, nrow = ds.dims["COL"], ds.dims["ROW"]
+    x_axis = ds.attrs["XORIG"] + (np.arange(ncol) + 0.5) * ds.attrs["XCELL"]
+    y_axis = ds.attrs["YORIG"] + (np.arange(nrow) + 0.5) * ds.attrs["YCELL"]
+    X, Y = np.meshgrid(x_axis, y_axis)
+    lon_c, lat_c = inv.transform(X, Y)
+
+    centres = np.column_stack([lon_c.ravel(), lat_c.ravel()])
+    tree = cKDTree(centres)
+
+    sensor_xy = np.column_stack([sensors["Longitude"].to_numpy(), sensors["Latitude"].to_numpy()])
+    _, idx_flat = tree.query(sensor_xy, k=1)
+    row = idx_flat // ncol
+    col = idx_flat % ncol
+
+    in_bounds = (
+        (sensors["Longitude"] >= lon_c.min())
+        & (sensors["Longitude"] <= lon_c.max())
+        & (sensors["Latitude"] >= lat_c.min())
+        & (sensors["Latitude"] <= lat_c.max())
+    ).to_numpy()
+
+    # exact time matching: -1 means “no exact hit”
+    time_idx = ds.indexes["time"].get_indexer(sensors["Time"].to_numpy())
+    time_ok = time_idx >= 0
+
+    valid = in_bounds & time_ok
+    pm25_grid = ds["PM25_TOT"].isel(LAY=0).values  # (time, row, col)
+
+    out = pd.Series(pd.NA, index=sensors.index, name="CONUS", dtype="Float64")
+    if valid.any():
+        out.iloc[valid] = pm25_grid[time_idx[valid], row[valid], col[valid]]
+
+    sensors["CONUS"] = out
+    return sensors
+
+
 def main() -> None:
     parse_args()
     try_auth()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS, MERRA2, MERRA2R, CAMS]
+    sources = [CONUS_2]
 
     for file in files:
         print(f"Reading {file.name}")
