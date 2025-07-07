@@ -13,15 +13,24 @@
 # #### MERRA2 
 # #### MERRA2R
 # #### CONUS
+# 
+# # NOTES
+# I want these sections
+# 
+# 1) Overall overview of each of the sources over the entire time range
+# 2) Overview of each of the sources per year
+# 3) First one but only when there are fires
+# 4) second one but only when there are fires
 
 # In[1]:
 
 
 import pandas as pd
+from pathlib import Path
 
-frm = pd.read_csv("./air_quality/data/out/out_hourly_88101_2016.csv")
-non_frm = pd.read_csv("./air_quality/data/out/out_hourly_88502_2016.csv")
-data = pd.concat([frm, non_frm], ignore_index=True)
+data_dir = Path("./air_quality/data/out")
+csv_files = list(data_dir.glob("*.csv"))
+data = pd.concat((pd.read_csv(f) for f in csv_files), ignore_index=True)
 
 
 # In[2]:
@@ -44,7 +53,7 @@ count = data[["Latitude", "Longitude"]].drop_duplicates().shape[0]
 print(f"Number of sensors: {count}")
 
 
-# In[20]:
+# In[ ]:
 
 
 from sklearn.linear_model import LinearRegression
@@ -54,7 +63,7 @@ import numpy as np
 import pandas as pd
 
 base_col = "Sample Measurement"
-sat_cols = ["CONUS"]
+sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R"]
 results = {}
 
 for col in sat_cols:
@@ -103,43 +112,4 @@ for col in sat_cols:
 
 correlations = pd.DataFrame(results).T
 print(correlations)
-
-
-# In[12]:
-
-
-data["CONUS"].max()
-
-
-# In[16]:
-
-
-data.loc[data['CONUS'].idxmin()]
-
-
-# In[17]:
-
-
-print(data["Sample Measurement"].min())
-
-
-# In[13]:
-
-
-max_idx = data["CONUS"].idxmax()
-value = data.loc[max_idx, "Sample Measurement"]
-print(value)
-
-
-# In[10]:
-
-
-num_under_1 = data["CONUS"].dropna().lt(1).sum()
-print(num_under_1)
-
-
-# In[ ]:
-
-
-
 

@@ -13,6 +13,7 @@ SENSOR_PATH = Path("data/sensors/using")
 TEST_PATH = Path("data/test/sensors")
 OUT_PATH = Path("data/out")
 
+
 def clear_output():
     for file in OUT_PATH.iterdir():
         if file.is_file():
@@ -48,7 +49,6 @@ def fmt_sensors(sensors):
  
      sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "CONUS", "MERRA2", "MERRA2R", "CAMS"]]
 
-     
      return sensors
 
 
@@ -250,7 +250,7 @@ def main() -> None:
             except Exception as e:
                 print(f"Error processing {source.__name__} for {file.name}: {e}")
                 continue
-            print(sensors)
+            print(sensors)      # 
         save(sensors, file.name)
 
 if __name__ == "__main__":
