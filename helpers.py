@@ -18,7 +18,7 @@ def correlations(data, min=None, max=None, sat_cols=None):
         max = 1000
 
     for col in sat_cols:
-        subset = data[[base_col, col]].dropna()
+        subset = data[[base_col, col, "Latitude", "Longitude"]].dropna()
         subset = subset[
             (subset[base_col].between(0.1, 1000)) &
             (subset[col].between(0.1, 1000))
@@ -35,7 +35,9 @@ def correlations(data, min=None, max=None, sat_cols=None):
             }
             continue
 
-        log_subset = np.log(subset)
+        log_subset = subset.copy()
+        log_subset[[base_col, col]] = np.log(subset[[base_col, col]])
+
 
         x = subset[col].values.reshape(-1, 1)
         y = subset[base_col].values
@@ -51,6 +53,8 @@ def correlations(data, min=None, max=None, sat_cols=None):
         pearson = subset[base_col].corr(subset[col], method="pearson")
         log_pearson = log_subset[base_col].corr(log_subset[col], method="pearson")
         spearman = spearmanr(subset[base_col], subset[col], nan_policy="omit").correlation
+        num_sensors = subset[["Latitude", "Longitude"]].drop_duplicates().shape[0]
+
 
         results[col] = {
             "Pearson": pearson,
@@ -60,6 +64,7 @@ def correlations(data, min=None, max=None, sat_cols=None):
             "Bias": bias,
             "Slope": slope,
             "Count": len(subset),
+            "Sensors": num_sensors,
         }
 
     df = pd.DataFrame(results).T
@@ -93,7 +98,7 @@ def yearly_correlations(data, source, min_val=None, max_val=None):
 
     for year in years:
         year_data = data[data["Time"].dt.year == year]
-        subset = year_data[[base_col, source]].dropna()
+        subset = year_data[[base_col, source, "Latitude", "Longitude"]].dropna()
         subset = subset[
             (subset[base_col].between(min_val, 1000)) &
             (subset[source].between(min_val, 1000))
@@ -102,7 +107,10 @@ def yearly_correlations(data, source, min_val=None, max_val=None):
         if subset.empty:
             continue
 
-        log_subset = np.log(subset)
+        log_subset = subset.copy()
+        log_subset[[base_col, source]] = np.log(subset[[base_col, source]])
+
+
         x = subset[source].values.reshape(-1, 1)
         y = subset[base_col].values
 
@@ -113,6 +121,7 @@ def yearly_correlations(data, source, min_val=None, max_val=None):
         pearson = subset[base_col].corr(subset[source], method="pearson")
         log_pearson = log_subset[base_col].corr(log_subset[source], method="pearson")
         spearman = spearmanr(subset[base_col], subset[source], nan_policy="omit").correlation
+        num_sensors = subset[["Latitude", "Longitude"]].drop_duplicates().shape[0]
 
         row = {
             "Year": year,
@@ -123,6 +132,7 @@ def yearly_correlations(data, source, min_val=None, max_val=None):
             "Bias": bias,
             "Slope": slope,
             "Count": len(subset),
+            "Sensors": num_sensors,
         }
 
         rows.append(row)

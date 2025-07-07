@@ -1,26 +1,17 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# ### Target Variable Evaluation for PM 2.5 Estimation
 # 
+# ### Target Variable Evaluation for PM 2.5 Estimation
+#  
 # Rupert is aiming to predict the air quality impact of fire (broad statement for now). To do this we need some source of truth to evaluate our predictions against and to use as a target variable when we're training our models. The obvious source of these readings are ground sensors. While there is a large dataset of hourly resolution sensor data available from [AirNow](https://aqs.epa.gov/aqsweb/airdata/download_files.html), it's still sparse compared to the overall area of the US. To cope with that we're going to try and use the air quality estimates from global atmospheric reanalysis datasets to fill in the areas missing from sensor datasets. The aim of this notebook is to evaluate several of these and see if they suit our purposes. 
 # 
-# ### The Datasets!
-# Data frequency, start/end dates, reanalyis type, and other general information. 
 # 
-# #### AirNow
-# #### CAMS
-# #### MERRA2 
-# #### MERRA2R
-# #### CONUS
-# 
-# # NOTES
-# I want these sections
-# 
-# 1) Overall overview of each of the sources over the entire time range
-# 2) Overview of each of the sources per year
-# 3) First one but only when there are fires
-# 4) second one but only when there are fires
+# ##### TO-DO
+# - Add my sanity check code that reproduces the metrics from each paper for each dataset
+# - Short description of each dataset
+# - Some plots instead of tables?
+# - Whatever rupurt wants
 
 # In[1]:
 
@@ -36,80 +27,158 @@ data = pd.concat((pd.read_csv(f) for f in csv_files), ignore_index=True)
 # In[2]:
 
 
-data
-data["Sample Measurement"] = data["Sample Measurement"].where(data["Sample Measurement"] >= 2, 1)
+data.isna().sum().sort_values(ascending=False)
 
 
 # In[3]:
 
 
-data.isna().sum().sort_values(ascending=False)
+data.shape
 
 
 # In[4]:
+
+
+data
+
+
+# In[5]:
 
 
 count = data[["Latitude", "Longitude"]].drop_duplicates().shape[0]
 print(f"Number of sensors: {count}")
 
 
+# In[6]:
+
+
+from helpers import correlations
+
+correlations(data)
+
+
+# In[7]:
+
+
+from helpers import yearly_correlations
+
+yearly_correlations(data, "CAMS")
+
+
+# In[8]:
+
+
+yearly_correlations(data, "CONUS")
+
+
+# In[9]:
+
+
+yearly_correlations(data, "MERRA2")
+
+
+# In[10]:
+
+
+data = (
+    data[data["Sample Measurement"] > 1]
+)
+
+yearly_correlations(data, "MERRA2R")
+
+
+# In[11]:
+
+
+fires = pd.read_pickle("air_quality/data/fires.pkl")
+
+
 # In[ ]:
 
 
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
-from scipy.stats import spearmanr
-import numpy as np
+fires.shape
+
+
+# In[ ]:
+
+
+fires
+
+
+# In[12]:
+
+
 import pandas as pd
+import geopandas as gpd
+from shapely.geometry import box
 
-base_col = "Sample Measurement"
-sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R"]
-results = {}
+data["Time"] = pd.to_datetime(data["Time"])
+fires["IDate"] = pd.to_datetime(fires["IDate"])
+fires["FDate"] = pd.to_datetime(fires["FDate"])
 
-for col in sat_cols:
-    subset = data[[base_col, col]].dropna()
-    subset = subset[
-        (subset[base_col].between(0.1, 1000)) &
-        (subset[col].between(0.1, 1000))
-    ]
+fires["geometry"] = fires.apply(
+    lambda row: box(row["lon"] - 1, row["lat"] - 1, row["lon"] + 1, row["lat"] + 1),
+    axis=1
+)
+fires_gdf = gpd.GeoDataFrame(fires, geometry="geometry", crs="EPSG:4326")
 
-    if subset.empty:
-        results[col] = {
-            "Pearson": np.nan,
-            "Log Pearson": np.nan,
-            "Spearman": np.nan,
-            "RMSE": np.nan,
-            "Bias": np.nan,
-            "Slope": np.nan,
-        }
-        continue
+min_date = fires["IDate"].min()
+max_date = fires["FDate"].max()
 
-    log_subset = np.log(subset)
+data_subset = data[(data["Time"] >= min_date) & (data["Time"] <= max_date)]
 
-    x = subset[col].values.reshape(-1, 1)
-    y = subset[base_col].values
+data_subset["geometry"] = gpd.points_from_xy(data_subset["Longitude"], data_subset["Latitude"])
+data_gdf = gpd.GeoDataFrame(data_subset, geometry="geometry", crs="EPSG:4326")
 
-    model = LinearRegression().fit(x, y)
-    slope = model.coef_[0]
+joined = gpd.sjoin(data_gdf, fires_gdf, predicate="within", how="inner")
 
-    bias = np.mean(y - x.flatten())
+filtered = joined[(joined["Time"] >= joined["IDate"]) & (joined["Time"] <= joined["FDate"])]
 
-    mse = mean_squared_error(y, x.flatten())
-    rmse = np.sqrt(mse)
+fires = filtered[data.columns]
 
-    pearson = subset[base_col].corr(subset[col], method="pearson")
-    log_pearson = log_subset[base_col].corr(log_subset[col], method="pearson")
-    spearman = spearmanr(subset[base_col], subset[col], nan_policy="omit").correlation
 
-    results[col] = {
-        "Pearson": pearson,
-        "Log Pearson": log_pearson,
-        "Spearman": spearman,
-        "RMSE": rmse,
-        "Bias": bias,
-        "Slope": slope,
-    }
+# In[13]:
 
-correlations = pd.DataFrame(results).T
-print(correlations)
+
+count = fires[["Latitude", "Longitude"]].drop_duplicates().shape[0]
+print(f"Number of sensors: {count}")
+
+
+# In[14]:
+
+
+correlations(fires)
+
+
+# In[15]:
+
+
+import warnings
+warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
+
+yearly_correlations(fires, "CAMS")
+
+
+# In[16]:
+
+
+yearly_correlations(fires, "CONUS")
+
+
+# In[17]:
+
+
+yearly_correlations(fires, "MERRA2")
+
+
+# In[ ]:
+
+
+yearly_correlations(fires, "MERRA2R")
+
+
+# In[19]:
+
+
+fires.to_csv("air_quality/data/fires.csv")
 
