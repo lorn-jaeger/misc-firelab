@@ -130,6 +130,8 @@ def MERRA2(sensors, name):
 
     return sensors
 
+import numpy as np
+
 def MERRA2R(sensors, name):
     sensors = sensors.copy()
     sensors["MERRA2R"] = pd.NA
@@ -143,20 +145,28 @@ def MERRA2R(sensors, name):
     sensors["lat"] = sensors["Latitude"]
     sensors["lon"] = sensors["Longitude"]
 
-    var = "MERRA2_CNN_Surface_PM25" 
-
-    interp = ds[var].interp(
+    var = "MERRA2_CNN_Surface_PM25"
+    pm25_interp = ds[var].interp(
         time=xr.DataArray(sensors["time_np"], dims="sensor"),
         lat=xr.DataArray(sensors["lat"], dims="sensor"),
         lon=xr.DataArray(sensors["lon"], dims="sensor"),
         method="nearest"
-    ) 
+    ).values
 
-    sensors["MERRA2R"] = interp.values
+    qflag_interp = ds["QFLAG"].interp(
+        lat=xr.DataArray(sensors["lat"], dims="sensor"),
+        lon=xr.DataArray(sensors["lon"], dims="sensor"),
+        method="nearest"
+    ).values
+
+    high_quality = (qflag_interp == 3) | (qflag_interp == 4)
+    pm25_interp[~high_quality] = np.nan  
+
+    sensors["MERRA2R"] = pm25_interp
 
     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
-
     return sensors
+
 
 
 def CONUS(sensors, name):
@@ -236,7 +246,7 @@ def main() -> None:
     parse_args()
 
     files = SENSOR_PATH.iterdir()
-    sources = [CONUS, CAMS, MERRA2, MERRA2R]
+    sources = [MERRA2R]
 
     for file in files:
         print(f"Reading {file.name}")
