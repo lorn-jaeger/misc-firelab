@@ -9,7 +9,7 @@ def correlations(data, min=None, max=None, sat_cols=None):
     base_col = "Sample Measurement"
 
     if sat_cols is None:
-        sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R"]
+        sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R", "MERRA2R_trimmed"]
     results = {}
 
     if min is None:

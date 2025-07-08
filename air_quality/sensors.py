@@ -145,28 +145,35 @@ def MERRA2R(sensors, name):
     sensors["lat"] = sensors["Latitude"]
     sensors["lon"] = sensors["Longitude"]
 
-    var = "MERRA2_CNN_Surface_PM25"
-    pm25_interp = ds[var].interp(
+    var = "MERRA2_CNN_Surface_PM25" 
+
+    interp = ds[var].interp(
         time=xr.DataArray(sensors["time_np"], dims="sensor"),
         lat=xr.DataArray(sensors["lat"], dims="sensor"),
         lon=xr.DataArray(sensors["lon"], dims="sensor"),
         method="nearest"
-    ).values
+    ) 
 
-    qflag_interp = ds["QFLAG"].interp(
+    interp_qflag = ds["QFLAG"].interp(
+        time=xr.DataArray(sensors["time_np"], dims="sensor"),
         lat=xr.DataArray(sensors["lat"], dims="sensor"),
         lon=xr.DataArray(sensors["lon"], dims="sensor"),
         method="nearest"
-    ).values
+    )
 
-    high_quality = (qflag_interp == 3) | (qflag_interp == 4)
-    pm25_interp[~high_quality] = np.nan  
 
-    sensors["MERRA2R"] = pm25_interp
+    qflag_values = interp_qflag.values
+    pm25_values = interp.values
+
+    valid = (qflag_values == 3) | (qflag_values == 4)
+    pm25_values[~valid] = pd.NA
+
+    sensors["MERRA2R"] = pm25_values
+
 
     sensors = sensors[["Time", "Latitude", "Longitude", "Sample Measurement", "MERRA2R", "MERRA2", "CONUS", "CAMS"]]
-    return sensors
 
+    return sensors
 
 
 def CONUS(sensors, name):
@@ -255,11 +262,7 @@ def main() -> None:
         print(f"Processing {file.name}")
         for source in sources:
             print(f"{source.__name__}...")
-            try:
-                sensors = source(sensors, file.name)
-            except Exception as e:
-                print(f"Error processing {source.__name__} for {file.name}: {e}")
-                continue
+            sensors = source(sensors, file.name)
             print(sensors)      # 
         save(sensors, file.name)
 
