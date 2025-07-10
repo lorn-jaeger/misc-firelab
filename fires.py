@@ -38,3 +38,5 @@ filtered = joined[(joined["Time"] >= joined["IDate"]) & (joined["Time"] <= joine
 
 fires = filtered[data.columns]
 
+fires.to_csv("fires2.csv")
+
