@@ -9,7 +9,7 @@ def correlations(data, min=None, max=None, sat_cols=None):
     base_col = "Sample Measurement"
 
     if sat_cols is None:
-        sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R"]
+        sat_cols = ["CONUS", "CAMS", "MERRA2", "MERRA2R", "MERRA2R_trimmed"]
     results = {}
 
     if min is None:
@@ -20,8 +20,8 @@ def correlations(data, min=None, max=None, sat_cols=None):
     for col in sat_cols:
         subset = data[[base_col, col, "Latitude", "Longitude"]].dropna()
         subset = subset[
-            (subset[base_col].between(0.1, 1000)) &
-            (subset[col].between(0.1, 1000))
+            (subset[base_col].between(2, 1000)) &
+            (subset[col].between(2, 1000))
         ]
 
         if subset.empty:
