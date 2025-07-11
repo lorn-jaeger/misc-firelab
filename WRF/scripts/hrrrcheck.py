@@ -1,10 +1,10 @@
 
 #!/usr/bin/env python3
 """
-check_hrrr_aws_f00.py
+hrrcheck.py
 
-Checks only the HRRR analysis files (f00) for each hourly cycle on AWS
-between START and END (inclusive), optionally including native grid.
+Checks only the HRRR analysis files (f00) for each hourly cycle on AWS,
+falling back to Google Cloud if the file is not found on AWS.
 
 Usage:
 python3 check_hrrr_aws_f00.py --start 20250115_00 --end 20250116_12 --native_grid
@@ -17,6 +17,7 @@ logging.basicConfig(format="%(asctime)s %(levelname)s: %(message)s",
 log = logging.getLogger(__name__)
 
 AWS_BASE = "https://noaa-hrrr-bdp-pds.s3.amazonaws.com"
+GCP_BASE = "https://storage.googleapis.com/high-resolution-rapid-refresh"
 FMT_YMDH = "%Y%m%d_%H"
 FMT_YMD = "%Y%m%d"
 FMT_HH = "%H"
@@ -34,13 +35,13 @@ def url_ok(url):
     except requests.RequestException:
         return False
 
-def build_urls(cycle_dt, native):
+def build_urls(cycle_dt, native, base):
     date = cycle_dt.strftime(FMT_YMD)
     hour = cycle_dt.strftime(FMT_HH)
-    base = f"{AWS_BASE}/hrrr.{date}/conus"
-    urls = [f"{base}/hrrr.t{hour}z.wrfprsf00.grib2"]
+    base_path = f"{base}/hrrr.{date}/conus"
+    urls = [f"{base_path}/hrrr.t{hour}z.wrfprsf00.grib2"]
     if native:
-        urls.append(f"{base}/hrrr.t{hour}z.wrfnatf00.grib2")
+        urls.append(f"{base_path}/hrrr.t{hour}z.wrfnatf00.grib2")
     return urls
 
 def main():
@@ -57,18 +58,22 @@ def main():
     missing = []
 
     for cyc in cycles:
-        for url in build_urls(cyc, a.native_grid):
-            if url_ok(url):
-                log.info(f"OK {url}")
+        for aws_url, gcp_url in zip(build_urls(cyc, a.native_grid, AWS_BASE),
+                                    build_urls(cyc, a.native_grid, GCP_BASE)):
+            if url_ok(aws_url):
+                log.info(f"OK (AWS) {aws_url}")
+            elif url_ok(gcp_url):
+                log.info(f"OK (GCP) {gcp_url}")
             else:
-                log.warning(f"missing {url}")
-                missing.append(url)
+                log.warning(f"missing {aws_url} and {gcp_url}")
+                missing.append((aws_url, gcp_url))
 
     log.info(f"Checked {len(cycles)} cycles; missing URLs: {len(missing)}")
     if missing:
-        log.info("First 10 missing URLs:")
-        for u in missing[:10]:
-            log.info(u)
+        log.info("First 10 missing URL pairs:")
+        for aws, gcp in missing[:10]:
+            log.info(f"AWS: {aws}")
+            log.info(f"GCP: {gcp}")
 
 if __name__ == "__main__":
     main()
