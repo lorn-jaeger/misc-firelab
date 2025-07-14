@@ -48,26 +48,28 @@ import numpy as np
 from pathlib import Path
 
 
-def save_temp_visuals_no_reproject(
+def check_visualsj(
     tiff_path: str | Path,
     wrf_path: str | Path,
     out_dir: str | Path = ".",
     prefix: str = "raw_view"
 ):
+    """
+    Use this to check if the images match visually. You can combine this with the 
+    javascript snippet in the GEE code editor to check the boxes as well. 
+    """
     tiff_path = Path(tiff_path)
     wrf_path = Path(wrf_path)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load WRF T2
     ds = xr.open_dataset(wrf_path)
-    t2 = ds["T2"].isel(Time=0).values  # shape: (y, x), units: K
+    t2 = ds["T2"].isel(Time=0).values  
+    t2 = np.flipud(t2)
 
-    # Load last band of TIFF
     with rasterio.open(tiff_path) as src:
-        tiff_band = src.read(src.count)  # Last band
+        tiff_band = src.read(src.count) 
 
-    # Get shared vmin/vmax for consistent shading
     vmin = float(np.nanmin([t2.min(), tiff_band.min()]))
     vmax = float(np.nanmax([t2.max(), tiff_band.max()]))
 
@@ -87,10 +89,4 @@ def save_temp_visuals_no_reproject(
 
 
 if __name__ == "__main__":
-    save_temp_visuals_no_reproject(
-        tiff_path="./gee_plus_wrf.tif",
-        wrf_path="./data/using/wrf/wrfout_d01_2017-07-15_00:00:00",
-        out_dir="./png_out"
-    )
-
-
+    
