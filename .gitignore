@@ -12,6 +12,8 @@ token.json
 *__pycache__*
 *ipynb*
 *.html*
+*.tif*
 shapefiles/
+png_out/
 
 

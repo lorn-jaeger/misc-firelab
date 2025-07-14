@@ -1,97 +1,96 @@
 
 import rasterio
-from rasterio.transform import xy
-from rasterio.warp import transform, transform_bounds
 from pathlib import Path
 import xarray as xr
-import rioxarray as rxr
-from rasterio.enums import Resampling
-from pyproj import CRS
+import rioxarray
 import numpy as np
 
-tiffs = Path("./data/using/tiffs/")
-wrf = Path("./data/using/wrf/")
-out = Path("./data/using/out/")
-
 def main():
-    tif_path = tiffs / "Image_Export_fire_20777134_2017-07-15.tif"
-    wrf_path = wrf / "wrfout_d01_2017-07-15_00:00:00"
+    tiff_path = "./data/using/tiffs/Image_Export_fire_20777134_2017-07-15.tif"
+    wrf_path = "./data/using/wrf/wrfout_d01_2017-07-15_00:00:00"
 
-    # --- Open GeoTIFF ---
-    with rasterio.open(tif_path) as src:
-        print("Number of bands:", src.count)
-        print("Width, Height:", src.width, src.height)
-        print("CRS (projection):", src.crs)
-        print("Transform (affine):", src.transform)
-        print("Resolution:", src.res) 
-        print("Data type:", src.dtypes)
-        print("Bounds:", src.bounds)
-        print("Driver:", src.driver)
+    with rasterio.open(tiff_path) as src:
+        profile = src.profile.copy()
+        data = src.read()
 
-        width = src.width
-        height = src.height
-        dst_crs = src.crs
-
-        center_row = height // 2
-        center_col = width // 2
-        utm_lon, utm_lat = xy(src.transform, center_row, center_col)
-        lon, lat = transform(src.crs, "EPSG:4326", [utm_lon], [utm_lat])  # type: ignore
-        print("Center Lat/Lon:", lat[0], lon[0])
-
-        original_bands = src.read()
-        profile = src.profile
-
-        bounds_latlon = transform_bounds(dst_crs, "EPSG:4326", *src.bounds)
-
-    # --- Load WRF T2 variable ---
     ds = xr.open_dataset(wrf_path)
-    da = ds["T2"].isel(Time=0)
+    t2 = ds["T2"].isel(Time=0)
+    lats = ds["XLAT"].isel(Time=0)
+    lons = ds["XLONG"].isel(Time=0)
 
-    # Rename spatial dims
-    da = da.rename({"west_east": "x", "south_north": "y"})
-    da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    t2 = t2.rename({"south_north": "y", "west_east": "x"})
+    lats = lats.rename({"south_north": "y", "west_east": "x"})
+    lons = lons.rename({"south_north": "y", "west_east": "x"})
 
-    # Create x/y coordinate arrays from DX/DY and shape
-    dx = float(ds.attrs["DX"])
-    dy = float(ds.attrs["DY"])
-    nx = da.sizes["x"]
-    ny = da.sizes["y"]
-    x_coords = (np.arange(nx) - nx // 2) * dx
-    y_coords = (np.arange(ny) - ny // 2) * dy
-    da = da.assign_coords(x=("x", x_coords), y=("y", y_coords))
+    x = lons.isel(y=0).data
+    y = lats.isel(x=0).data
+    t2 = t2.assign_coords({"x": x, "y": y})
 
-    # Construct Lambert CRS
-    lcc_crs = CRS.from_dict({
-        "proj": "lcc",
-        "lat_1": float(ds.attrs.get("TRUELAT1", ds.get("TRUELAT1"))),
-        "lat_2": float(ds.attrs.get("TRUELAT2", ds.get("TRUELAT2"))),
-        "lat_0": float(ds.attrs.get("MOAD_CEN_LAT", ds.get("MOAD_CEN_LAT"))),
-        "lon_0": float(ds.attrs.get("CEN_LON", ds.get("CEN_LON"))),
-        "x_0": 0,
-        "y_0": 0,
-        "datum": "WGS84",
-        "units": "m"
-    })
-    da.rio.write_crs(lcc_crs.to_wkt(), inplace=True)
+    t2.name = "T2_Celsius"
+    t2.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+    t2.rio.write_crs("EPSG:4326", inplace=True) 
 
-    # --- Clip and reproject to match TIFF ---
-    da_clip = da.rio.clip_box(*bounds_latlon, allow_one_dimensional_raster=True)
-    tif_rio = rxr.open_rasterio(tif_path, masked=True)
-    da_match = da_clip.rio.reproject_match(tif_rio, resampling=Resampling.bilinear)
+    template = rioxarray.open_rasterio(tiff_path)
+    t2_matched = t2.rio.reproject_match(template)
 
-    # --- Add new band ---
-    new_band = da_match.data.astype(profile["dtype"], copy=False)
-    profile.update(count=profile["count"] + 1)
+    t2_band = t2_matched.values[np.newaxis, ...] 
+    new_data = np.concatenate([data, t2_band], axis=0)
+    profile.update(count=new_data.shape[0])
 
-    out_path = out / "tiff_with_wrf.tif"
-    with rasterio.open(out_path, "w", **profile) as dst:
-        for i in range(profile["count"] - 1):
-            dst.write(original_bands[i], i + 1)
-        dst.write(new_band[0], profile["count"])
-        dst.set_band_description(profile["count"], "T2_from_WRF")
+    with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
+        dst.write(new_data)
 
-    print("Output written to:", out_path)
 
-if __name__ == '__main__':
-    main()
+import rasterio
+import xarray as xr
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+
+
+def save_temp_visuals_no_reproject(
+    tiff_path: str | Path,
+    wrf_path: str | Path,
+    out_dir: str | Path = ".",
+    prefix: str = "raw_view"
+):
+    tiff_path = Path(tiff_path)
+    wrf_path = Path(wrf_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load WRF T2
+    ds = xr.open_dataset(wrf_path)
+    t2 = ds["T2"].isel(Time=0).values  # shape: (y, x), units: K
+
+    # Load last band of TIFF
+    with rasterio.open(tiff_path) as src:
+        tiff_band = src.read(src.count)  # Last band
+
+    # Get shared vmin/vmax for consistent shading
+    vmin = float(np.nanmin([t2.min(), tiff_band.min()]))
+    vmax = float(np.nanmax([t2.max(), tiff_band.max()]))
+
+    def save_image(array, out_file):
+        plt.figure(figsize=(6, 6))
+        plt.imshow(array, cmap="gray", vmin=vmin, vmax=vmax)
+        plt.axis("off")
+        plt.savefig(out_file, dpi=300, bbox_inches="tight", pad_inches=0)
+        plt.close()
+
+    save_image(t2, out_dir / f"{prefix}_wrf.png")
+    save_image(tiff_band, out_dir / f"{prefix}_tiff.png")
+
+    print("Saved PNGs:")
+    print(out_dir / f"{prefix}_wrf.png")
+    print(out_dir / f"{prefix}_tiff.png")
+
+
+if __name__ == "__main__":
+    save_temp_visuals_no_reproject(
+        tiff_path="./gee_plus_wrf.tif",
+        wrf_path="./data/using/wrf/wrfout_d01_2017-07-15_00:00:00",
+        out_dir="./png_out"
+    )
+
 
