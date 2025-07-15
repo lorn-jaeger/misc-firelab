@@ -1,4 +1,6 @@
 import rasterio
+from wrf import getvar, enable_xarray   
+import re
 import xarray as xr
 import rioxarray
 import numpy as np
@@ -7,6 +9,7 @@ import argparse
 from dataclasses import dataclass
 import datetime
 
+enable_xarray()
 
 WRF_PATH = Path("data/wrf")
 TIFF_PATH = Path("data/tiff")
@@ -16,11 +19,13 @@ OUT_PATH = Path("data/out")
 class Fire:
     id: int
     date: datetime.date
-    path: Path
+    tiff_path: Path
+    wrf_path: Path
     
     @classmethod
     def from_filename(cls, filename):
-        path = TIFF_PATH / filename
+        tiff_path = TIFF_PATH / filename
+        wrf_path = WRF_PATH / filename
         stem = Path(filename).stem
         parts = stem.split('_')
 
@@ -30,7 +35,29 @@ class Fire:
         id = int(parts[3])
         date = datetime.date.fromisoformat(parts[4])
 
-        return cls(id=id, date=date, path=path)
+        return cls(id=id, date=date, tiff_path=tiff_path, wrf_path=wrf_path)
+
+@dataclass
+class Tiff:
+    id: int
+    date: datetime.date
+    tiff_path: Path
+    wrf_path: Path
+    
+    @classmethod
+    def from_filename(cls, filename):
+        tiff_path = TIFF_PATH / filename
+        wrf_path = WRF_PATH / filename
+        stem = Path(filename).stem
+        parts = stem.split('_')
+
+        if len(parts) != 5 or parts[2] != "fire":
+            raise ValueError(f"Check file format: {filename}")
+
+        id = int(parts[3])
+        date = datetime.date.fromisoformat(parts[4])
+
+        return cls(id=id, date=date, tiff_path=tiff_path, wrf_path=wrf_path)
         
 def clear_output():
     for file in OUT_PATH.iterdir():
@@ -61,9 +88,36 @@ def parse_args():
     if args.clear_out:
         clear_output() 
 
-def append_wrf(fire: Fire):
-    for tiff in fire.path.iterdir():
-        pass
+def get_tiff_date(name):
+    return re.findall(r'\d{4}-\d{2}-\d{2}', name)
+
+
+def append_wrf(fire, tiff):
+    with rasterio.open(tiff) as src:
+        profile = src.profile.copy()
+        data = src.read()
+
+    year = get_tiff_date(tiff.name)
+
+    wrf_files = sorted(
+        fire.wrf_path.glob(f"wrfout_d01_{year}_*:00:00")
+    )
+
+    ds = xr.open_dataset(
+        wrf_files, #type: ignore
+        combine="by_coords"
+    )
+
+    ds["Humidity"] = getvar(ds, "rh")
+    ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
+
+
+
+
+
+def process(fire: Fire):
+    for tiff in fire.tiff_path.iterdir():
+        append_wrf(fire, tiff)
 
 
 def main():
@@ -73,7 +127,7 @@ def main():
 
     for fire_dir in fires:
         fire = Fire.from_filename(fire_dir.name)
-        append_wrf(fire)
+        process(fire)
 
 
 if __name__ == "__main__":
