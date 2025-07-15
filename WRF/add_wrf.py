@@ -1,4 +1,5 @@
 import rasterio
+import traceback
 from wrf import getvar, enable_xarray   
 import re
 import xarray as xr
@@ -11,54 +12,29 @@ import datetime
 
 enable_xarray()
 
-WRF_PATH = Path("data/wrf")
-TIFF_PATH = Path("data/tiff")
-OUT_PATH = Path("data/out")
+WRF_PATH = Path("data/using/wrf")
+TIFF_PATH = Path("data/using/tiffs")
+OUT_PATH = Path("data/using/out")
 
 @dataclass
 class Fire:
     id: int
-    date: datetime.date
     tiff_path: Path
     wrf_path: Path
     
     @classmethod
-    def from_filename(cls, filename):
-        tiff_path = TIFF_PATH / filename
-        wrf_path = WRF_PATH / filename
-        stem = Path(filename).stem
+    def from_filename(cls, dir_name):
+        tiff_path = TIFF_PATH / dir_name
+        wrf_path = WRF_PATH / dir_name
+        stem = Path(dir_name).stem
+        print(stem)
         parts = stem.split('_')
+        print(parts)
+        id = int(parts[1])
 
-        if len(parts) != 5 or parts[2] != "fire":
-            raise ValueError(f"Check file format: {filename}")
+        return cls(id=id, tiff_path=tiff_path, wrf_path=wrf_path)
 
-        id = int(parts[3])
-        date = datetime.date.fromisoformat(parts[4])
 
-        return cls(id=id, date=date, tiff_path=tiff_path, wrf_path=wrf_path)
-
-@dataclass
-class Tiff:
-    id: int
-    date: datetime.date
-    tiff_path: Path
-    wrf_path: Path
-    
-    @classmethod
-    def from_filename(cls, filename):
-        tiff_path = TIFF_PATH / filename
-        wrf_path = WRF_PATH / filename
-        stem = Path(filename).stem
-        parts = stem.split('_')
-
-        if len(parts) != 5 or parts[2] != "fire":
-            raise ValueError(f"Check file format: {filename}")
-
-        id = int(parts[3])
-        date = datetime.date.fromisoformat(parts[4])
-
-        return cls(id=id, date=date, tiff_path=tiff_path, wrf_path=wrf_path)
-        
 def clear_output():
     for file in OUT_PATH.iterdir():
         if file.is_file():
@@ -91,25 +67,36 @@ def parse_args():
 def get_tiff_date(name):
     return re.findall(r'\d{4}-\d{2}-\d{2}', name)
 
-
-def append_wrf(fire, tiff):
-    with rasterio.open(fire.tiff_path / tiff) as src:
+def get_tiff_ds(fire, tiff):
+    with rasterio.open(tiff) as src:
         profile = src.profile.copy()
         data = src.read()
 
-    date = get_tiff_date(tiff.name)
+    date = get_tiff_date(tiff.name)[0]
 
     wrf_files = sorted(
         fire.wrf_path.glob(f"wrfout_d01_{date}_*:00:00")
     )
 
-    ds = xr.open_dataset(
+    ds = xr.open_mfdataset(
         wrf_files, #type: ignore
-        combine="by_coords"
+        combine="by_coords", 
+        engine="netcdf4"
     )
 
     ds["Humidity"] = getvar(ds, "rh")
     ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
+
+    lats = ds["XLAT"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
+    lons = ds["XLONG"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
+    x = lons.isel(y=0).data
+    y = lats.isel(x=0).data
+
+    return ds, x, y, data, profile
+    
+
+def append_wrf(fire, tiff):
+    ds, x, y, data, profile = get_tiff_ds(fire, tiff)
 
     fields = [
         "Humidity",
@@ -119,13 +106,8 @@ def append_wrf(fire, tiff):
         "T2"
     ]
 
-    lats = ds["XLAT"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
-    lons = ds["XLONG"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
-    x = lons.isel(y=0).data
-    y = lats.isel(x=0).data
-
     bands = []
-    template = rioxarray.open_rasterio(tiff_path)
+    template = rioxarray.open_rasterio(tiff)
 
     for field in fields:
         var = ds[field].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
@@ -139,26 +121,31 @@ def append_wrf(fire, tiff):
     new_data = np.concatenate([data, wrf_stack], axis=0)
     profile.update(count=new_data.shape[0])
 
-    with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
-        dst.write(new_data)
 
-def process(fire: Fire):
-    for tiff in fire.tiff_path.iterdir():
-        append_wrf(fire, tiff)
+    output = OUT_PATH / "fire_" + fire.id / f"{tiff.stem}_plus_wrf.tif"
+
+    with rasterio.open(output, "w", **profile) as dst:
+        dst.write(new_data)
 
 
 def main():
     parse_args()
-
+    
     fires = TIFF_PATH.iterdir()
-
     for fire_dir in fires:
+        print(fires)
         fire = Fire.from_filename(fire_dir.name)
-        process(fire)
-
+        for tiff in fire.tiff_path.iterdir():
+            try:
+                append_wrf(fire, tiff)
+            except Exception as e:
+                if not isinstance(e, OSError):
+                    traceback.print_exc()
+                else:
+                    print(e)
 
 if __name__ == "__main__":
-    pass
+    main()
 
     #
     # tiff_path = "./data/using/tiffs/Image_Export_fire_20777134_2017-07-15.tif"
