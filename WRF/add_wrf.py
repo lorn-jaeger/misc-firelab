@@ -93,14 +93,14 @@ def get_tiff_date(name):
 
 
 def append_wrf(fire, tiff):
-    with rasterio.open(tiff) as src:
+    with rasterio.open(fire.tiff_path / tiff) as src:
         profile = src.profile.copy()
         data = src.read()
 
-    year = get_tiff_date(tiff.name)
+    date = get_tiff_date(tiff.name)
 
     wrf_files = sorted(
-        fire.wrf_path.glob(f"wrfout_d01_{year}_*:00:00")
+        fire.wrf_path.glob(f"wrfout_d01_{date}_*:00:00")
     )
 
     ds = xr.open_dataset(
@@ -111,9 +111,36 @@ def append_wrf(fire, tiff):
     ds["Humidity"] = getvar(ds, "rh")
     ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
 
+    fields = [
+        "Humidity",
+        "Precipitation",
+        "U10",
+        "V10",
+        "T2"
+    ]
 
+    lats = ds["XLAT"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
+    lons = ds["XLONG"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
+    x = lons.isel(y=0).data
+    y = lats.isel(x=0).data
 
+    bands = []
+    template = rioxarray.open_rasterio(tiff_path)
 
+    for field in fields:
+        var = ds[field].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
+        var = var.assign_coords({"x": x, "y": y})
+        var.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
+        var.rio.write_crs("EPSG:4326", inplace=True)
+        var_reproj = var.rio.reproject_match(template)
+        bands.append(var_reproj.values)
+
+    wrf_stack = np.stack(bands) 
+    new_data = np.concatenate([data, wrf_stack], axis=0)
+    profile.update(count=new_data.shape[0])
+
+    with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
+        dst.write(new_data)
 
 def process(fire: Fire):
     for tiff in fire.tiff_path.iterdir():
