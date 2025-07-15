@@ -61,8 +61,10 @@ def parse_args():
     if args.clear_out:
         clear_output() 
 
-def append_wrf(fire):
-    pass
+def append_wrf(fire: Fire):
+    for tiff in fire.path.iterdir():
+        pass
+
 
 def main():
     parse_args()
@@ -72,7 +74,6 @@ def main():
     for fire_dir in fires:
         fire = Fire.from_filename(fire_dir.name)
         append_wrf(fire)
-
 
 
 if __name__ == "__main__":
