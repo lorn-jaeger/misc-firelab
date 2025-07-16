@@ -86,6 +86,8 @@ def get_tiff_ds(fire, tiff):
 
     ds["Humidity"] = getvar(ds, "rh")
     ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
+    
+
 
     lats = ds["XLAT"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
     lons = ds["XLONG"].isel(Time=0).rename({"south_north": "y", "west_east": "x"})
@@ -145,47 +147,46 @@ def main():
                     print(e)
 
 if __name__ == "__main__":
-    main()
 
-    #
-    # tiff_path = "./data/using/tiffs/Image_Export_fire_20777134_2017-07-15.tif"
-    # wrf_path = "./data/using/wrf/wrfout_d01_2017-07-15_00:00:00"
-    #
-    # with rasterio.open(tiff_path) as src:
-    #     profile = src.profile.copy()
-    #     data = src.read()
-    #
-    # ds = xr.open_dataset(wrf_path)
-    # t2 = ds["T2"].isel(Time=0)
-    # lats = ds["XLAT"].isel(Time=0)
-    # lons = ds["XLONG"].isel(Time=0)
-    #
-    # t2 = t2.rename({"south_north": "y", "west_east": "x"})
-    # lats = lats.rename({"south_north": "y", "west_east": "x"})
-    # lons = lons.rename({"south_north": "y", "west_east": "x"})
-    #
-    # x = lons.isel(y=0).data
-    # y = lats.isel(x=0).data
-    # t2 = t2.assign_coords({"x": x, "y": y})
-    #
-    # t2.name = "T2_Celsius"
-    # t2.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-    # t2.rio.write_crs("EPSG:4326", inplace=True) 
-    #
-    # template = rioxarray.open_rasterio(tiff_path)
-    # t2_matched = t2.rio.reproject_match(template)
-    #
-    # t2_band = t2_matched.values[np.newaxis, ...] 
-    # new_data = np.concatenate([data, t2_band], axis=0)
-    # profile.update(count=new_data.shape[0])
-    #
-    # with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
-    #     dst.write(new_data)
-    #
-    #
-    #
+    tiff_path = "./data/using/tiffs/fire_20777134/Image_Export_fire_20777134_2017-07-20.tif"
+    wrf_path = "./data/using/wrf/fire_20777134/"
 
+    with rasterio.open(tiff_path) as src:
+        profile = src.profile.copy()
+        data = src.read()
 
+    date = get_tiff_date(tiff_path)[0]
+
+    files = [
+        xr.open_dataset(fp)
+        for fp in sorted(Path(wrf_path).glob(f"wrfout_d01_{date}_*:00:00"))
+    ]
+
+    for ds in files:
+        ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
+
+    fields = [
+        "Precipitation",
+        "U10",
+        "V10",
+        "T2"
+    ]
+
+    for ds in files:
+        for field in fields:
+            new = ds[field].isel(Time=0).assign_coords({
+                "west_east": ds["XLONG"].isel(Time=0).isel(south_north=0).data,
+                "south_north": ds["XLAT"].isel(Time=0).isel(west_east=0).data
+            })
+            new.name = field
+            new.rio.set_spatial_dims(x_dim="west_east", y_dim="south_north", inplace=True)
+            new.rio.write_crs("EPSG:4326", inplace=True)
+            new_matched = new.rio.reproject_match(rioxarray.open_rasterio(tiff_path))
+            new_data = np.concatenate([data, new_matched.values[np.newaxis, ...]], axis=0)
+            profile.update(count=new_data.shape[0])
+
+    with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
+        dst.write(new_data)  #type: ignore
 
 # def check_visualsj(
 #     tiff_path: str | Path,
