@@ -6,6 +6,7 @@ import subprocess
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--wrf-path', type=Path, required=True)
+    parser.add_argument('--out-path', type=Path, required=True)
     args = parser.parse_args()
 
     return args
@@ -41,12 +42,19 @@ def strip_wrfout(file):
 
     return ds
 
-def write_wrf(ds):
-    pass
+def write_file(file,  ds, out_path):
+    parent = file.parent.name
+    target = out_path / parent
+
+    target.mkdir(parents=True, exist_ok=True)
+
+    out_file = target / file.name
+    ds.to_netcdf(out_file, format="NETCDF4_CLASSIC")
     
 def main():
     args = parse_args()
     wrf_path = args.wrf_path
+    out_path = args.out_path
 
     print(f"Starting Size: {get_directory_size(wrf_path)}") 
 
@@ -54,12 +62,12 @@ def main():
     for file in files:
         try:
             ds = strip_wrfout(file)
-            write_wrf(ds)
+            write_file(file, ds, out_path)
             print(f"Stripped {file.name}")
         except Exception as e:
             print(f"Error reading {file.name}: {e}")
 
-    print(f"Ending Size: {get_directory_size(wrf_path)}") 
+    print(f"Ending Size: {get_directory_size(out_path)}") 
 
 if __name__ == '__main__':
     main()
