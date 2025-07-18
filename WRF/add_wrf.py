@@ -146,10 +146,75 @@ def main():
                 else:
                     print(e)
 
+
+import numpy as np
+import xarray as xr
+from netCDF4 import Dataset
+from wrf import getvar
+import pytest
+
+
+
+def wrf_temperature(p, theta):
+    """Convert potential temperature to actual temperature"""
+    p0 = 100000.0  # Pa
+    R_d = 287.05
+    c_p = 1004.0
+    return theta * (p / p0) ** (R_d / c_p)
+
+def compute_rh_like_wrf(qv, p, pb, t):
+    """Matches WRF-Python RH calculation more closely"""
+    EPS = 0.622
+    EZERO = 0.6112
+    ESLCON1 = 17.67
+    ESLCON2 = 29.65
+    CELKEL = 273.15
+
+    qv = np.maximum(qv, 0)  # prevent negatives
+    full_p = p + pb
+    full_t = t + 300  # theta = T + 300
+    temp_k = wrf_temperature(full_p, full_t)
+
+    es = 10 * EZERO * np.exp(ESLCON1 * (temp_k - CELKEL) / (temp_k - ESLCON2))
+    qvs = EPS * es / (0.01 * full_p - (1 - EPS) * es)
+    rh = 100 * np.clip(qv / qvs, 0, 1)
+    return rh
+
+
+
+def test_compute_rh_matches_getvar():
+    wrf_path = "./data/using/wrf/fire_20777134/wrfout_d01_2017-07-01_00:00:00"
+    time_idx = 0
+
+    # WRF-Python result
+    with Dataset(wrf_path) as nc:
+        rh_wrf = getvar(nc, "rh", timeidx=time_idx, meta=True)
+
+    # xarray inputs
+    ds = xr.open_dataset(wrf_path)
+    qv = ds["QVAPOR"].isel(Time=time_idx).values
+    p = ds["P"].isel(Time=time_idx).values
+    pb = ds["PB"].isel(Time=time_idx).values
+    t = ds["T"].isel(Time=time_idx).values  # perturbation theta
+
+    rh_custom = compute_rh_like_wrf(qv, p, pb, t)
+
+    assert np.allclose(rh_custom, rh_wrf.values, atol=1.0), \
+        "Mismatch between compute_rh_like_wrf and getvar('rh')"
+
+    # Optional diagnostics
+    print("Mean abs diff:", np.mean(np.abs(rh_custom - rh_wrf.values)))
+    print("Max abs diff:", np.max(np.abs(rh_custom - rh_wrf.values)))
+
+
+
+
 if __name__ == "__main__":
 
     tiff_path = "./data/using/tiffs/fire_20777134/Image_Export_fire_20777134_2017-07-20.tif"
     wrf_path = "./data/using/wrf/fire_20777134/"
+
+    test_compute_rh_matches_getvar()
 
     with rasterio.open(tiff_path) as src:
         profile = src.profile.copy()
@@ -163,6 +228,7 @@ if __name__ == "__main__":
     ]
 
     for ds in files:
+        ds["Humidity"] = getvar(ds, "rh")
         ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
 
     fields = [
@@ -186,7 +252,15 @@ if __name__ == "__main__":
             profile.update(count=new_data.shape[0])
 
     with rasterio.open("gee_plus_wrf.tif", "w", **profile) as dst:
-        dst.write(new_data)  #type: ignore
+        dst.write(new_data)  #type: ignorefps = sorted(Path(wrf_path).glob(f"wrfout_d01_{date}_*:00:00"))
+files = [xr.open_dataset(fp) for fp in fps]
+
+for ds, fp in zip(files, fps):
+    with Dataset(str(fp), mode="r") as nc:
+        rh = getvar(nc, "rh", meta=True)
+
+    ds["Humidity"] = rh
+    ds["Precipitation"] = ds["RAINNC"] + ds["RAINC"]
 
 # def check_visualsj(
 #     tiff_path: str | Path,
