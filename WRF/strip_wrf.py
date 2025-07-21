@@ -42,6 +42,7 @@ def strip_wrfout(file):
 
     return ds
 
+
 def write_file(file,  ds, out_path):
     parent = file.parent.name
     target = out_path / parent
@@ -50,6 +51,7 @@ def write_file(file,  ds, out_path):
 
     out_file = target / file.name
     ds.to_netcdf(out_file, format="NETCDF4_CLASSIC")
+
     
 def main():
     args = parse_args()
