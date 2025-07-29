@@ -9,6 +9,7 @@ token.json
 *.csv
 *.nc
 *.nc.part
+*.yaml
 *__pycache__*
 *ipynb*
 *.html*
@@ -16,5 +17,7 @@ token.json
 shapefiles/
 png_out/
 *Miniconda3-latest-Linux-x86_64.sh*
+.envrc
+.venv
 
 
