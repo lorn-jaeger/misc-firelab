@@ -32,7 +32,6 @@ decorator==5.2.1
 earthaccess==0.14.0
 earthengine-api==1.5.18
 eccodes==2.41.0
--e git+ssh://git@github.com/KylesCorner/Earth-Engine-Wildfire-Data.git@49db2a3203c73623eb4477051f7a3983f198b305#egg=ee_wildfire
 eerepr==0.1.2
 executing==2.2.0
 findlibs==0.1.1
