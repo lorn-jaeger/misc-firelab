@@ -55,17 +55,14 @@ for year in sorted(os.listdir(fires_root)):
                 pm25 = to_xy(ds["MERRA2_CNN_Surface_PM25"]).mean(dim="time").squeeze()
                 qflag = to_xy(ds["QFLAG"]).squeeze()
 
-                # reproject to fire grid
                 pm25_match = pm25.rio.reproject_match(fire, resampling=Resampling.bilinear).squeeze()
                 qflag_match = qflag.rio.reproject_match(fire, resampling=Resampling.nearest).squeeze()
 
-                # ensure (y,x)
                 if set(pm25_match.dims) != {"y", "x"}:
                     pm25_match = pm25_match.transpose("y", "x")
                 if set(qflag_match.dims) != {"y", "x"}:
                     qflag_match = qflag_match.transpose("y", "x")
 
-                # keep dtype consistent across bands (GeoTIFF requires one dtype)
                 pm25_match = pm25_match.astype(target_dtype)
                 qflag_match = qflag_match.astype(target_dtype)
 
@@ -80,7 +77,6 @@ for year in sorted(os.listdir(fires_root)):
                 if nodata is not None:
                     combined = combined.rio.write_nodata(nodata)
 
-                # build descriptions but DO NOT attach to attrs before write (to avoid rioxarray crash)
                 existing_ln = fire.attrs.get("long_name")
                 if isinstance(existing_ln, (list, tuple)) and len(existing_ln) == base_bands:
                     fire_descs = list(existing_ln)
@@ -90,14 +86,11 @@ for year in sorted(os.listdir(fires_root)):
                 qflag_desc = qflag.attrs.get("long_name") or "QFLAG"
                 descs = fire_descs + [pm25_desc, qflag_desc]
 
-                # make sure no mismatched 'long_name' survives to the writer
                 cleaned_attrs = {k: v for k, v in fire.attrs.items() if k != "long_name"}
                 combined.attrs = cleaned_attrs
 
-                # write the data first
                 combined.rio.to_raster(fire_tif)
 
-                # then set descriptions and tags explicitly with rasterio (robust + deterministic)
                 with rasterio.open(fire_tif, "r+") as dst:
                     for i, desc in enumerate(descs, start=1):
                         try:
