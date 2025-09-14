@@ -4,7 +4,6 @@ credentials.json
 token.json
 oath.txt
 token.json
-*.json
 *.log
 *.csv
 *.nc
